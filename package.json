@@ -1,6 +1,6 @@
 {
   "name": "node-cpal",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Node.js bindings for CPAL (Cross-Platform Audio Library)",
   "main": "index.js",
   "types": "index.d.ts",
@@ -34,12 +34,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yourusername/node-cpal.git"
+    "url": "git+https://github.com/saeta-eth/node-cpal.git"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/node-cpal/issues"
+    "url": "https://github.com/saeta-eth/node-cpal/issues"
   },
-  "homepage": "https://github.com/yourusername/node-cpal#readme",
+  "homepage": "https://github.com/saeta-eth/node-cpal#readme",
   "files": [
     "index.js",
     "index.d.ts",
