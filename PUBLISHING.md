@@ -59,7 +59,7 @@ The GitHub Actions workflow:
 
    - Windows (x64)
    - macOS (x64 and ARM64/Apple Silicon)
-   - Linux (x64)
+   - Linux (x64 and ARM64)
 
 2. Creates a package structure that includes:
 
