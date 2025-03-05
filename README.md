@@ -4,7 +4,7 @@ Node.js bindings for CPAL (Cross-Platform Audio Library), providing low-level au
 
 [![npm version](https://img.shields.io/npm/v/node-cpal.svg)](https://www.npmjs.com/package/node-cpal)
 [![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](https://opensource.org/licenses/ISC)
-[![Build and Publish](https://github.com/yourusername/node-cpal/actions/workflows/build-and-publish.yml/badge.svg)](https://github.com/yourusername/node-cpal/actions/workflows/build-and-publish.yml)
+[![Build and Publish](https://github.com/saeta-eth/node-cpal/actions/workflows/build-and-publish.yml/badge.svg)](https://github.com/saeta-eth/node-cpal/actions/workflows/build-and-publish.yml)
 
 ## Overview
 
