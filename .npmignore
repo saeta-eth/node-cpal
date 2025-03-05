@@ -1,0 +1,30 @@
+# Source code
+src/
+Cargo.toml
+Cargo.lock
+target/
+
+# Build artifacts
+cargo.log
+cross.log
+.git/
+.gitignore
+.DS_Store
+
+# Tests
+tests/
+
+# GitHub Actions
+.github/
+
+# Documentation that doesn't need to be published
+PUBLISHING.md
+
+# Only include necessary files
+# The following will be included:
+# - index.js (platform detection and loading)
+# - index.d.ts (TypeScript definitions)
+# - bin/ (platform-specific binaries)
+# - package.json
+# - README.md
+# - examples/ (for reference)

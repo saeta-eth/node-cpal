@@ -1,0 +1,140 @@
+name: Build and Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.1.0)'
+        required: true
+        default: ''
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node-version: [16]
+        include:
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: darwin
+            arch: x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+            arch: x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: win32
+            arch: x64
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Prepare package
+        run: |
+          mkdir -p dist/${{ matrix.platform }}-${{ matrix.arch }}
+          cp index.node dist/${{ matrix.platform }}-${{ matrix.arch }}/
+          cp index.d.ts dist/
+          cp package.json dist/
+          cp README.md dist/
+          cp -r examples dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: binaries-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist
+
+  publish:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Prepare package
+        run: |
+          mkdir -p dist
+          cp index.js dist/
+          cp index.d.ts dist/
+          cp package.json dist/
+          cp README.md dist/
+          cp -r examples dist/
+          mkdir -p dist/bin
+
+          # Copy platform-specific binaries to the bin directory
+          mkdir -p dist/bin/darwin-x64
+          mkdir -p dist/bin/linux-x64
+          mkdir -p dist/bin/win32-x64
+
+          # Copy the binaries from artifacts
+          cp artifacts/binaries-darwin-x64/darwin-x64/index.node dist/bin/darwin-x64/ || echo "No macOS binary found"
+          cp artifacts/binaries-linux-x64/linux-x64/index.node dist/bin/linux-x64/ || echo "No Linux binary found"
+          cp artifacts/binaries-win32-x64/win32-x64/index.node dist/bin/win32-x64/ || echo "No Windows binary found"
+
+      - name: Modify package.json for platform-specific binaries
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('dist/package.json', 'utf8'));
+            pkg.main = 'index.js';
+            delete pkg.gypfile;
+            fs.writeFileSync('dist/package.json', JSON.stringify(pkg, null, 2));
+          "
+
+      - name: Set version
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          cd dist
+          npm version ${{ github.event.inputs.version }} --no-git-tag-version
+
+      - name: Extract version from tag
+        if: github.event_name == 'push'
+        run: |
+          TAG=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$TAG" >> $GITHUB_ENV
+          cd dist
+          npm version $TAG --no-git-tag-version
+
+      - name: Publish to npm
+        run: |
+          cd dist
+          npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

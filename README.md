@@ -4,6 +4,7 @@ Node.js bindings for CPAL (Cross-Platform Audio Library), providing low-level au
 
 [![npm version](https://img.shields.io/npm/v/node-cpal.svg)](https://www.npmjs.com/package/node-cpal)
 [![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](https://opensource.org/licenses/ISC)
+[![Build and Publish](https://github.com/yourusername/node-cpal/actions/workflows/build-and-publish.yml/badge.svg)](https://github.com/yourusername/node-cpal/actions/workflows/build-and-publish.yml)
 
 ## Overview
 
@@ -41,6 +42,16 @@ node-cpal provides native Node.js bindings to the [CPAL](https://github.com/Rust
 ```bash
 npm install node-cpal
 ```
+
+### Platform Support
+
+node-cpal provides pre-built binaries for the following platforms:
+
+- Windows (x64)
+- macOS (x64)
+- Linux (x64)
+
+The package automatically detects your platform and loads the appropriate binary.
 
 ### Requirements
 
@@ -305,3 +316,7 @@ ISC License
 
 - [CPAL](https://github.com/RustAudio/cpal) - The Rust Cross-Platform Audio Library
 - [Neon](https://neon-bindings.com/) - Rust bindings for writing safe and fast native Node.js modules
+
+### Publishing New Versions
+
+This package uses GitHub Actions to build platform-specific binaries and publish them to npm. See [PUBLISHING.md](PUBLISHING.md) for detailed instructions on how to publish new versions.
