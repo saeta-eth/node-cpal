@@ -1,0 +1,21 @@
+{
+  "name": "node-cpal-examples",
+  "version": "1.0.0",
+  "description": "Examples demonstrating how to use node-cpal",
+  "private": true,
+  "scripts": {
+    "list-devices": "node list-devices.js",
+    "play-tone": "node play-tone.js",
+    "record-audio": "node record-audio.js",
+    "audio-visualizer": "node audio-visualizer.js",
+    "audio-passthrough": "node audio-passthrough.js",
+    "beep": "node beep.js",
+    "record-and-playback": "node record-and-playback.js"
+  },
+  "dependencies": {
+    "node-cpal": "^0.1.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
