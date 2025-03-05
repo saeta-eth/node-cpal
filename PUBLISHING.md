@@ -39,7 +39,7 @@ There are two ways to publish a new version:
 
 This will automatically trigger the GitHub Actions workflow, which will:
 
-- Build the native binaries for all platforms
+- Build the native binaries for all platforms and architectures
 - Package them together
 - Publish to npm
 
@@ -55,11 +55,11 @@ This will automatically trigger the GitHub Actions workflow, which will:
 
 The GitHub Actions workflow:
 
-1. Builds the native addon on multiple platforms:
+1. Builds the native addon on multiple platforms and architectures:
 
-   - Windows
-   - macOS
-   - Linux
+   - Windows (x64)
+   - macOS (x64 and ARM64/Apple Silicon)
+   - Linux (x64)
 
 2. Creates a package structure that includes:
 

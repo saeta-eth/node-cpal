@@ -48,7 +48,7 @@ npm install node-cpal
 node-cpal provides pre-built binaries for the following platforms:
 
 - Windows (x64)
-- macOS (x64)
+- macOS (x64 and ARM64/Apple Silicon)
 - Linux (x64)
 
 The package automatically detects your platform and loads the appropriate binary.

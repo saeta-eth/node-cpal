@@ -12,7 +12,7 @@ function getBinding() {
 
   // Map of supported platforms and architectures
   const supportedPlatforms = ['darwin', 'linux', 'win32'];
-  const supportedArchs = ['x64'];
+  const supportedArchs = ['x64', 'arm64'];
 
   // Check if current platform and architecture are supported
   if (!supportedPlatforms.includes(platform)) {
