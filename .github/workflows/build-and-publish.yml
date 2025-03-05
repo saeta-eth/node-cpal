@@ -196,21 +196,28 @@ jobs:
             fs.writeFileSync('dist/package.json', JSON.stringify(pkg, null, 2));
           "
 
-      - name: Set version
+      - name: Set version from workflow dispatch
         if: github.event_name == 'workflow_dispatch'
         run: |
           cd dist
-          npm version ${{ github.event.inputs.version }} --no-git-tag-version
+          npm version ${{ github.event.inputs.version }} --no-git-tag-version --allow-same-version
           echo "Publishing version ${{ github.event.inputs.version }}"
 
-      - name: Extract version from tag
-        if: github.event_name == 'push'
+      - name: Set version from tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         run: |
+          # Extract version from tag (remove the 'v' prefix)
           TAG=${GITHUB_REF#refs/tags/v}
-          echo "VERSION=$TAG" >> $GITHUB_ENV
+          echo "Extracted version: $TAG"
+
+          # Read current version from package.json
+          CURRENT_VERSION=$(node -p "require('./dist/package.json').version")
+          echo "Current version in package.json: $CURRENT_VERSION"
+
+          # Set the version in the dist package.json
           cd dist
-          npm version $TAG --no-git-tag-version
-          echo "Publishing version $TAG from git tag"
+          npm version $TAG --no-git-tag-version --allow-same-version
+          echo "Set version to $TAG in dist/package.json"
 
       - name: Publish to npm
         run: |
