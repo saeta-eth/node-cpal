@@ -13,6 +13,7 @@ try {
 } catch (e) {
   cpal = require('node-cpal');
 }
+const { getF32StreamConfig } = require('./f32-config');
 
 // Configuration
 const FREQUENCY = 440; // 440 Hz (A4 note)
@@ -31,10 +32,13 @@ async function main() {
       return;
     }
 
-    // Get the default output configuration
-    const selectedConfig = cpal.getDefaultOutputConfig(outputDevice.deviceId);
+    const selectedConfig = getF32StreamConfig(
+      cpal,
+      outputDevice.deviceId,
+      false
+    );
     console.log(
-      `Using configuration: ${selectedConfig.sampleRate} Hz, ${selectedConfig.channels} channels, ${selectedConfig.sampleFormat} format`
+      `Using configuration: ${selectedConfig.sampleRate} Hz, ${selectedConfig.channels} channels, f32 format`
     );
     console.log(
       `Playing a ${FREQUENCY} Hz tone for ${DURATION_SECONDS} second(s)...`
@@ -58,9 +62,10 @@ async function main() {
     function generateSineWave(size) {
       const buffer = new Float32Array(size);
       for (let i = 0; i < size; i++) {
+        const frame = Math.floor(sampleClock / selectedConfig.channels);
         // Generate sine wave: sin(2π * frequency * time)
         buffer[i] = Math.sin(
-          (2 * Math.PI * FREQUENCY * sampleClock) / selectedConfig.sampleRate
+          (2 * Math.PI * FREQUENCY * frame) / selectedConfig.sampleRate
         );
         sampleClock++;
       }
@@ -86,8 +91,12 @@ async function main() {
       );
       process.stdout.write(`\rProgress: ${progress}%`);
 
-      // Small delay to prevent overwhelming the audio system
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      const chunkDurationMs =
+        (samplesToWrite /
+          selectedConfig.channels /
+          selectedConfig.sampleRate) *
+        1000;
+      await new Promise((resolve) => setTimeout(resolve, chunkDurationMs));
     }
 
     // Wait a bit to ensure all audio is played

@@ -12,6 +12,7 @@ try {
 } catch (e) {
   cpal = require('node-cpal');
 }
+const { getF32StreamConfig } = require('./f32-config');
 
 // Configuration
 const RECORD_DURATION_SECONDS = 10;
@@ -129,16 +130,18 @@ async function main() {
       return;
     }
 
-    // Get the default input configuration
-    const inputConfig = cpal.getDefaultInputConfig(inputDevice.deviceId);
+    const inputConfig = getF32StreamConfig(cpal, inputDevice.deviceId, true);
     console.log(
-      `Input configuration: ${inputConfig.sampleRate} Hz, ${inputConfig.channels} channels, ${inputConfig.sampleFormat} format`
+      `Input configuration: ${inputConfig.sampleRate} Hz, ${inputConfig.channels} channels, f32 format`
     );
 
-    // Get the default output configuration
-    const outputConfig = cpal.getDefaultOutputConfig(outputDevice.deviceId);
+    const outputConfig = getF32StreamConfig(
+      cpal,
+      outputDevice.deviceId,
+      false
+    );
     console.log(
-      `Output configuration: ${outputConfig.sampleRate} Hz, ${outputConfig.channels} channels, ${outputConfig.sampleFormat} format`
+      `Output configuration: ${outputConfig.sampleRate} Hz, ${outputConfig.channels} channels, f32 format`
     );
 
     // Prepare to collect recorded data

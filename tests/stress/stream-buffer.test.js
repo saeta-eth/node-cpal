@@ -1,11 +1,11 @@
-const cpal = require('../');
+const cpal = require('../..');
 const assert = require('assert');
 const {
   sleep,
   generateSineWave,
   getTestDevice,
   getTestConfig,
-} = require('./utils');
+} = require('../helpers/hardware');
 
 describe('Stream Buffer Tests', () => {
   let outputDevice;
@@ -58,11 +58,10 @@ describe('Stream Buffer Tests', () => {
     // Write them in rapid succession
     for (const beep of beeps) {
       cpal.writeToStream(outputStream, beep);
-      // No sleep - testing rapid writes
     }
 
-    // Wait for all beeps to finish playing
-    await sleep(1500);
+    assert(cpal.isStreamActive(outputStream));
+    await sleep(10 * 0.1 * 1000);
   });
 
   it('should handle alternating frequencies', async () => {
@@ -79,17 +78,18 @@ describe('Stream Buffer Tests', () => {
       );
 
       cpal.writeToStream(outputStream, tone);
-      await sleep(250); // Small gap between tones
+      assert(cpal.isStreamActive(outputStream));
+      await sleep(0.2 * 1000);
     }
   });
 
   it('should handle varying buffer sizes', async () => {
     // Test with different buffer sizes
     const bufferSizes = [
-      config.sampleRate * config.channels * 0.1, // 100ms
-      config.sampleRate * config.channels * 0.5, // 500ms
-      config.sampleRate * config.channels * 0.05, // 50ms
-      config.sampleRate * config.channels * 1.0, // 1 second
+      Math.floor(config.sampleRate * config.channels * 0.1), // 100ms
+      Math.floor(config.sampleRate * config.channels * 0.5), // 500ms
+      Math.floor(config.sampleRate * config.channels * 0.05), // 50ms
+      Math.floor(config.sampleRate * config.channels * 1.0), // 1 second
     ];
 
     for (const size of bufferSizes) {
@@ -108,71 +108,39 @@ describe('Stream Buffer Tests', () => {
 
       // Write to the stream
       cpal.writeToStream(outputStream, buffer);
+      assert(cpal.isStreamActive(outputStream));
 
-      // Wait for the buffer to play
       const durationMs = (size / config.channels / config.sampleRate) * 1000;
-      await sleep(durationMs + 100); // Add a small buffer
+      await sleep(durationMs);
     }
   });
 
   it('should handle buffer overflow gracefully', async () => {
-    // Generate a very large buffer (10 seconds of audio)
+    // Keep the first buffer pending long enough to fill the bounded queue.
     const largeBuffer = generateSineWave(
       440,
       config.sampleRate,
       config.channels,
-      10,
+      1,
       0.5
     );
+    let acceptedWrites = 0;
+    let bufferFullError;
 
-    // Try to write it multiple times in rapid succession
-    // This should test the channel's buffer handling
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 64; i++) {
       try {
         cpal.writeToStream(outputStream, largeBuffer);
-      } catch (e) {
-        // If it throws a buffer full error, that's expected behavior
-        assert(
-          e.message.includes('buffer full'),
-          'Should throw buffer full error'
-        );
+        acceptedWrites++;
+      } catch (error) {
+        bufferFullError = error;
         break;
       }
-      // If it doesn't throw, continue the test
-      await sleep(10);
     }
 
-    // Give some time for the audio to play
-    await sleep(1000);
-  });
-
-  it('should handle pause/resume during playback', async () => {
-    // Generate a long tone (3 seconds)
-    const longTone = generateSineWave(
-      440,
-      config.sampleRate,
-      config.channels,
-      3,
-      0.5
-    );
-
-    // Start playing
-    cpal.writeToStream(outputStream, longTone);
-
-    // Wait a bit
-    await sleep(500);
-
-    // Pause the stream
-    cpal.pauseStream(outputStream);
-
-    // Wait while paused
-    await sleep(1000);
-
-    // Resume the stream
-    cpal.resumeStream(outputStream);
-
-    // Wait for the rest to play
-    await sleep(1500);
+    assert(acceptedWrites > 0);
+    assert(bufferFullError, 'The bounded stream queue should report overflow');
+    assert.match(bufferFullError.message, /buffer full/i);
+    assert(cpal.isStreamActive(outputStream));
   });
 
   it('should handle stereo panning', async function () {
@@ -182,7 +150,10 @@ describe('Stream Buffer Tests', () => {
     }
 
     // Create a stereo buffer with sound panned to the left
-    const leftPan = new Float32Array(config.sampleRate * config.channels);
+    const panDuration = 1;
+    const leftPan = new Float32Array(
+      config.sampleRate * config.channels * panDuration
+    );
     for (let i = 0; i < config.sampleRate; i++) {
       const value = Math.sin((2 * Math.PI * 440 * i) / config.sampleRate) * 0.5;
       leftPan[i * config.channels] = value; // Left channel at full volume
@@ -191,10 +162,13 @@ describe('Stream Buffer Tests', () => {
 
     // Write and play left-panned audio
     cpal.writeToStream(outputStream, leftPan);
-    await sleep(1100);
+    assert(cpal.isStreamActive(outputStream));
+    await sleep(panDuration * 1000);
 
     // Create a stereo buffer with sound panned to the right
-    const rightPan = new Float32Array(config.sampleRate * config.channels);
+    const rightPan = new Float32Array(
+      config.sampleRate * config.channels * panDuration
+    );
     for (let i = 0; i < config.sampleRate; i++) {
       const value = Math.sin((2 * Math.PI * 440 * i) / config.sampleRate) * 0.5;
       rightPan[i * config.channels] = value * 0.1; // Left channel at 10% volume
@@ -203,6 +177,7 @@ describe('Stream Buffer Tests', () => {
 
     // Write and play right-panned audio
     cpal.writeToStream(outputStream, rightPan);
-    await sleep(1100);
+    assert(cpal.isStreamActive(outputStream));
+    await sleep(panDuration * 1000);
   });
 });

@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": true,
+    "skipLibCheck": false,
+    "strict": true,
+    "target": "es2019",
+    "types": ["node"]
+  },
+  "files": ["api.test.ts"]
+}

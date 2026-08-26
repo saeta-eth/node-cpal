@@ -4,6 +4,7 @@ Node.js bindings for CPAL (Cross-Platform Audio Library), providing low-level au
 
 [![npm version](https://img.shields.io/npm/v/node-cpal.svg)](https://www.npmjs.com/package/node-cpal)
 [![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](https://opensource.org/licenses/ISC)
+[![CI](https://github.com/saeta-eth/node-cpal/actions/workflows/ci.yml/badge.svg)](https://github.com/saeta-eth/node-cpal/actions/workflows/ci.yml)
 [![Build and Publish](https://github.com/saeta-eth/node-cpal/actions/workflows/build-and-publish.yml/badge.svg)](https://github.com/saeta-eth/node-cpal/actions/workflows/build-and-publish.yml)
 
 ## Overview
@@ -29,7 +30,7 @@ node-cpal provides native Node.js bindings to the [CPAL](https://github.com/Rust
 - **Developer-Friendly**
 
   - Comprehensive TypeScript definitions
-  - Promise-based API (optional)
+  - Synchronous device and stream-control API
   - Detailed error messages
 
 - **Cross-Platform**
@@ -76,13 +77,35 @@ console.log('Available audio hosts:', hosts);
 const outputDevice = cpal.getDefaultOutputDevice();
 console.log('Default output device:', outputDevice);
 
-// Create an output stream with default configuration
-const config = cpal.getDefaultOutputConfig(outputDevice.deviceId);
+// Select an f32 output capability, because stream data uses Float32Array
+const defaultConfig = cpal.getDefaultOutputConfig(outputDevice.deviceId);
+const supportedConfigs = cpal
+  .getSupportedOutputConfigs(outputDevice.deviceId)
+  .filter((config) => config.format === 'f32');
+const supportedConfig =
+  supportedConfigs.find(
+    (config) =>
+      config.channels === defaultConfig.channels &&
+      defaultConfig.sampleRate >= config.minSampleRate &&
+      defaultConfig.sampleRate <= config.maxSampleRate
+  ) || supportedConfigs[0];
+if (!supportedConfig) {
+  throw new Error('Default output device does not support f32 audio');
+}
+
+const config = {
+  sampleRate:
+    defaultConfig.sampleRate >= supportedConfig.minSampleRate &&
+    defaultConfig.sampleRate <= supportedConfig.maxSampleRate
+      ? defaultConfig.sampleRate
+      : supportedConfig.minSampleRate,
+  channels: supportedConfig.channels,
+};
 const stream = cpal.createStream(
   outputDevice.deviceId,
-  false, // false for output stream, true for input stream
+  false,
   config,
-  () => {} // Callback function (not needed for output streams)
+  () => {} // The native API requires a callback; output does not invoke it
 );
 
 // Close the stream when done
@@ -104,34 +127,36 @@ Each example includes detailed comments explaining how the code works.
 
 ### Host and Device Enumeration
 
-#### `getHosts(): string[]`
+#### `getHosts(): AudioHost[]`
 
 Returns an array of available audio hosts on the system.
 
 ```javascript
 const hosts = cpal.getHosts();
-// Example: ['CoreAudio']
+// Example: [{ id: 'coreaudio', name: 'CoreAudio' }]
 ```
 
-#### `getDevices(hostId?: string): string[]`
+#### `getDevices(hostId?: string): AudioDevice[]`
 
-Returns an array of all available audio devices for the specified host, or all hosts if not specified. Defaults to default host.
+Returns device objects for the specified host. When omitted, `hostId` defaults to the platform's default host.
 
 ```javascript
-const devices = cpal.getDevices();
+const host = cpal.getHosts()[0];
+const devices = cpal.getDevices(host.id);
+console.log(devices[0].deviceId, devices[0].name);
 ```
 
-#### `getDefaultInputDevice(): string`
+#### `getDefaultInputDevice(): AudioDevice`
 
-Returns the default input (recording) device ID.
+Returns the default input device object, or throws when no default input device exists.
 
 ```javascript
 const inputDevice = cpal.getDefaultInputDevice();
 ```
 
-#### `getDefaultOutputDevice(): string`
+#### `getDefaultOutputDevice(): AudioDevice`
 
-Returns the default output (playback) device ID.
+Returns the default output device object, or throws when no default output device exists.
 
 ```javascript
 const outputDevice = cpal.getDefaultOutputDevice();
@@ -145,7 +170,7 @@ Returns an array of supported input configurations for the specified device.
 
 ```javascript
 const inputDevice = cpal.getDefaultInputDevice();
-const configs = cpal.getSupportedInputConfigs(inputDevice);
+const configs = cpal.getSupportedInputConfigs(inputDevice.deviceId);
 ```
 
 #### `getSupportedOutputConfigs(deviceId: string): AudioDeviceConfig[]`
@@ -154,46 +179,67 @@ Returns an array of supported output configurations for the specified device.
 
 ```javascript
 const outputDevice = cpal.getDefaultOutputDevice();
-const configs = cpal.getSupportedOutputConfigs(outputDevice);
+const configs = cpal.getSupportedOutputConfigs(outputDevice.deviceId);
 ```
 
-#### `getDefaultInputConfig(deviceId: string): StreamConfig`
+Supported configurations contain `minSampleRate`, `maxSampleRate`, `channels`, and `format`.
+
+#### `getDefaultInputConfig(deviceId: string): DefaultStreamConfig`
 
 Returns the default input configuration for the specified device.
 
 ```javascript
 const inputDevice = cpal.getDefaultInputDevice();
-const config = cpal.getDefaultInputConfig(inputDevice);
+const config = cpal.getDefaultInputConfig(inputDevice.deviceId);
 ```
 
-#### `getDefaultOutputConfig(deviceId: string): StreamConfig`
+#### `getDefaultOutputConfig(deviceId: string): DefaultStreamConfig`
 
 Returns the default output configuration for the specified device.
 
 ```javascript
 const outputDevice = cpal.getDefaultOutputDevice();
-const config = cpal.getDefaultOutputConfig(outputDevice);
+const config = cpal.getDefaultOutputConfig(outputDevice.deviceId);
 ```
+
+Default configurations contain `sampleRate`, `channels`, and `sampleFormat`.
+
+#### `getSupportedFormats(deviceId: string): SampleFormat[]`
+
+Returns the unique input and output formats exposed by the device.
+
+#### `getSupportedSampleRates(deviceId: string): number[]`
+
+Returns sorted, unique minimum and maximum sample-rate boundaries exposed by the device.
+
+#### `getMaxChannels(deviceId: string): number`
+
+Returns the largest input or output channel count exposed by the device.
 
 ### Stream Management
 
-#### `createStream(deviceId: string, isInput: boolean, config: StreamConfig, callback?: (data: Float32Array) => void): StreamHandle`
+#### `createStream(deviceId: string, isInput: boolean, config: StreamConfig, callback: (data: Float32Array) => void): StreamId`
 
-Creates an audio stream. For input streams, the callback function will be called with audio data.
+Creates a stream and returns its string ID. Input callbacks receive `Float32Array` data. The callback argument is also required for output streams, although output streams do not invoke it.
+
+Streams currently use `f32` samples internally. Choose `sampleRate` and `channels` from a supported configuration whose `format` is `f32`; do not assume the default format is compatible.
 
 ```javascript
 // Creating an input stream
 const inputDevice = cpal.getDefaultInputDevice();
-const inputConfig = cpal.getDefaultInputConfig(inputDevice);
+const inputCapability = cpal
+  .getSupportedInputConfigs(inputDevice.deviceId)
+  .find((config) => config.format === 'f32');
+if (!inputCapability) throw new Error('Input device does not support f32');
+const inputConfig = {
+  sampleRate: inputCapability.minSampleRate,
+  channels: inputCapability.channels,
+};
 
 const inputStream = cpal.createStream(
-  inputDevice,
-  true, // true for input stream
-  {
-    sampleRate: inputConfig.sampleRate,
-    channels: inputConfig.channels,
-    format: 'f32',
-  },
+  inputDevice.deviceId,
+  true,
+  inputConfig,
   (data) => {
     // Process incoming audio data
     console.log(`Received ${data.length} samples`);
@@ -202,21 +248,24 @@ const inputStream = cpal.createStream(
 
 // Creating an output stream
 const outputDevice = cpal.getDefaultOutputDevice();
-const outputConfig = cpal.getDefaultOutputConfig(outputDevice);
+const outputCapability = cpal
+  .getSupportedOutputConfigs(outputDevice.deviceId)
+  .find((config) => config.format === 'f32');
+if (!outputCapability) throw new Error('Output device does not support f32');
+const outputConfig = {
+  sampleRate: outputCapability.minSampleRate,
+  channels: outputCapability.channels,
+};
 
 const outputStream = cpal.createStream(
-  outputDevice,
-  false, // false for output stream
-  {
-    sampleRate: outputConfig.sampleRate,
-    channels: outputConfig.channels,
-    format: 'f32',
-  },
-  () => {} // No callback needed for output
+  outputDevice.deviceId,
+  false,
+  outputConfig,
+  () => {}
 );
 ```
 
-#### `writeToStream(streamHandle: StreamHandle, data: Float32Array): void`
+#### `writeToStream(streamId: StreamId, data: Float32Array): void`
 
 Writes audio data to an output stream.
 
@@ -225,7 +274,7 @@ Writes audio data to an output stream.
 cpal.writeToStream(outputStream, audioBuffer);
 ```
 
-#### `pauseStream(streamHandle: StreamHandle): void`
+#### `pauseStream(streamId: StreamId): void`
 
 Pauses an active stream.
 
@@ -233,7 +282,7 @@ Pauses an active stream.
 cpal.pauseStream(stream);
 ```
 
-#### `resumeStream(streamHandle: StreamHandle): void`
+#### `resumeStream(streamId: StreamId): void`
 
 Resumes a paused stream.
 
@@ -241,7 +290,7 @@ Resumes a paused stream.
 cpal.resumeStream(stream);
 ```
 
-#### `closeStream(streamHandle: StreamHandle): void`
+#### `closeStream(streamId: StreamId): void`
 
 Closes and cleans up a stream.
 
@@ -249,7 +298,7 @@ Closes and cleans up a stream.
 cpal.closeStream(stream);
 ```
 
-#### `isStreamActive(streamHandle: StreamHandle): boolean`
+#### `isStreamActive(streamId: StreamId): boolean`
 
 Checks if a stream is currently active.
 
@@ -285,16 +334,29 @@ interface AudioDeviceConfig {
   format: SampleFormat;
 }
 
+interface AudioHost {
+  id: string;
+  name: string;
+}
+
+interface AudioDevice {
+  name: string;
+  hostId: string;
+  deviceId: string;
+  isDefaultInput: boolean;
+  isDefaultOutput: boolean;
+}
+
 interface StreamConfig {
   sampleRate: number;
   channels: number;
+}
+
+interface DefaultStreamConfig extends StreamConfig {
   sampleFormat: SampleFormat;
 }
 
-interface StreamHandle {
-  deviceId: string;
-  streamId: string;
-}
+type StreamId = string;
 ```
 
 ## Building from Source
@@ -309,11 +371,29 @@ interface StreamHandle {
 
 ## Testing
 
-Run the test suite:
+Run deterministic JavaScript, TypeScript, and Rust unit tests without audio hardware:
 
 ```bash
 npm test
 ```
+
+Build the addon before running tests that use real devices:
+
+```bash
+npm run build
+npm run test:audio
+npm run test:stress
+```
+
+Run report-only audio benchmarks separately:
+
+```bash
+npm run benchmark:audio
+```
+
+Hardware tests skip only capabilities that are genuinely unavailable. Record the operating system, architecture, and input/output hardware when reporting results.
+
+The manually triggered **Audio Hardware Tests** GitHub workflow targets a self-hosted runner with both `self-hosted` and `audio` labels. That runner must already have direct audio-device access and the platform development libraries listed above.
 
 ## Contributing
 

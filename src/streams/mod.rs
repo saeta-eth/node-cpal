@@ -306,4 +306,66 @@ mod tests {
         assert_eq!(output_buffer.pending_buffer.capacity(), 0);
         assert_eq!(output_buffer.pending_offset, 0);
     }
+
+    #[test]
+    fn drains_multiple_queued_buffers_in_order() {
+        let (sender, receiver) = bounded(2);
+        sender.send(vec![1.0, 2.0]).unwrap();
+        sender.send(vec![3.0, 4.0]).unwrap();
+
+        let mut output_buffer = OutputBufferState::default();
+        let mut output = [0.0; 4];
+        output_buffer.fill(&mut output, &receiver);
+
+        assert_eq!(output, [1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(output_buffer.pending_buffer.capacity(), 0);
+        assert_eq!(output_buffer.pending_offset, 0);
+    }
+
+    #[test]
+    fn zero_fills_output_after_queued_data_is_exhausted() {
+        let (sender, receiver) = bounded(1);
+        sender.send(vec![1.0, 2.0]).unwrap();
+
+        let mut output_buffer = OutputBufferState::default();
+        let mut output = [-1.0; 4];
+        output_buffer.fill(&mut output, &receiver);
+
+        assert_eq!(output, [1.0, 2.0, 0.0, 0.0]);
+        assert_eq!(output_buffer.pending_buffer.capacity(), 0);
+        assert_eq!(output_buffer.pending_offset, 0);
+    }
+
+    #[test]
+    fn continues_pending_data_before_the_next_queued_buffer() {
+        let (sender, receiver) = bounded(2);
+        sender.send(vec![1.0, 2.0, 3.0]).unwrap();
+        sender.send(vec![4.0, 5.0]).unwrap();
+
+        let mut output_buffer = OutputBufferState::default();
+        let mut first_output = [0.0; 2];
+        output_buffer.fill(&mut first_output, &receiver);
+        let mut second_output = [0.0; 3];
+        output_buffer.fill(&mut second_output, &receiver);
+
+        assert_eq!(first_output, [1.0, 2.0]);
+        assert_eq!(second_output, [3.0, 4.0, 5.0]);
+        assert_eq!(output_buffer.pending_buffer.capacity(), 0);
+        assert_eq!(output_buffer.pending_offset, 0);
+    }
+
+    #[test]
+    fn skips_empty_queued_buffers() {
+        let (sender, receiver) = bounded(2);
+        sender.send(Vec::new()).unwrap();
+        sender.send(vec![7.0, 8.0]).unwrap();
+
+        let mut output_buffer = OutputBufferState::default();
+        let mut output = [0.0; 2];
+        output_buffer.fill(&mut output, &receiver);
+
+        assert_eq!(output, [7.0, 8.0]);
+        assert_eq!(output_buffer.pending_buffer.capacity(), 0);
+        assert_eq!(output_buffer.pending_offset, 0);
+    }
 }

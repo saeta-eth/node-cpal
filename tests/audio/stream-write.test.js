@@ -1,11 +1,11 @@
-const cpal = require('../');
+const cpal = require('../..');
 const assert = require('assert');
 const {
   sleep,
   generateSineWave,
   getTestDevice,
   getTestConfig,
-} = require('./utils');
+} = require('../helpers/hardware');
 
 describe('Stream Write Tests', () => {
   let outputDevice;
@@ -60,13 +60,13 @@ describe('Stream Write Tests', () => {
 
     // Write the data to the stream
     cpal.writeToStream(outputStream, sineWave);
-
-    // No assertion needed - if it doesn't throw, it worked
+    assert(cpal.isStreamActive(outputStream));
   });
 
   it('should write multiple buffers in sequence', async () => {
     // Generate three different tones
     const frequencies = [261.63, 329.63, 392.0]; // C4, E4, G4 (C major chord)
+    const toneDuration = 0.3;
 
     for (const freq of frequencies) {
       // Generate a short tone (0.3 seconds)
@@ -74,7 +74,7 @@ describe('Stream Write Tests', () => {
         freq,
         config.sampleRate,
         config.channels,
-        0.3,
+        toneDuration,
         0.5
       );
 
@@ -82,8 +82,10 @@ describe('Stream Write Tests', () => {
       cpal.writeToStream(outputStream, tone);
 
       // Wait for the tone to play
-      await sleep(300);
+      await sleep(toneDuration * 1000);
     }
+
+    assert(cpal.isStreamActive(outputStream));
   });
 
   it('should handle empty buffer gracefully', () => {
@@ -142,8 +144,11 @@ describe('Stream Write Tests', () => {
 
     // Write the large buffer to the stream
     cpal.writeToStream(outputStream, longSineWave);
-
-    // No assertion needed - if it doesn't throw, it worked
+    assert.strictEqual(
+      longSineWave.length,
+      config.sampleRate * config.channels * 5
+    );
+    assert(cpal.isStreamActive(outputStream));
   });
 
   it('should close the stream properly', () => {
