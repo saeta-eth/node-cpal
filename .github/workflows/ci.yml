@@ -32,7 +32,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install Rust
@@ -60,7 +60,7 @@ jobs:
         run: npm run build
 
   minimum-versions:
-    name: Node 14 and Rust 1.85
+    name: Node 22 and Rust 1.85
     runs-on: ubuntu-latest
 
     steps:
@@ -70,11 +70,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 14.21.3
+          node-version: 22.0.0
           cache: npm
-
-      - name: Install lockfile-compatible npm
-        run: npm install --global npm@9.9.4
 
       - name: Install Rust 1.85
         uses: dtolnay/rust-toolchain@1.85.0

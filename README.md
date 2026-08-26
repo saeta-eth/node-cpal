@@ -56,7 +56,7 @@ The package automatically detects your platform and loads the appropriate binary
 
 ### Requirements
 
-- Node.js 14.0.0 or later
+- Node.js 22.0.0 or later
 - For building from source:
   - Rust toolchain (rustc, cargo)
   - Platform-specific audio development libraries:

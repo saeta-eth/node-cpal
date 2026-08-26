@@ -6,7 +6,7 @@ This directory contains examples demonstrating how to use the node-cpal library 
 
 Before running these examples, make sure you have:
 
-1. Node.js 14.0.0 or later installed
+1. Node.js 22.0.0 or later installed
 2. Installed node-cpal:
    ```bash
    npm install node-cpal
