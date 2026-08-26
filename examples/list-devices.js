@@ -15,44 +15,49 @@ function formatSampleRates(minRate, maxRate) {
   return `${minRate} - ${maxRate} Hz`;
 }
 
-// Helper function to format device capabilities
-function formatDeviceCapabilities(device) {
+function getCapabilities(getConfigs) {
+  try {
+    return { configs: getConfigs(), error: null };
+  } catch (error) {
+    return { configs: [], error: error.message };
+  }
+}
+
+function formatSupportedConfigs(label, capabilities) {
   const result = [];
 
-  // Input capabilities
-  if (device.supportedInputConfigs && device.supportedInputConfigs.length > 0) {
-    result.push('Input Capabilities:');
-    device.supportedInputConfigs.forEach((config, index) => {
+  if (capabilities.configs.length > 0) {
+    result.push(`${label} Capabilities:`);
+    capabilities.configs.forEach((config, index) => {
       result.push(
         `  Config #${index + 1}: ${formatSampleRates(
           config.minSampleRate,
           config.maxSampleRate
-        )}, ${config.channels} channels, ${config.sampleFormat} format`
+        )}, ${config.channels} channels, ${config.format} format`
       );
     });
+  } else if (capabilities.error) {
+    result.push(`${label} Capabilities: Unavailable (${capabilities.error})`);
   } else {
-    result.push('Input Capabilities: None');
+    result.push(`${label} Capabilities: None`);
   }
 
-  // Output capabilities
-  if (
-    device.supportedOutputConfigs &&
-    device.supportedOutputConfigs.length > 0
-  ) {
-    result.push('Output Capabilities:');
-    device.supportedOutputConfigs.forEach((config, index) => {
-      result.push(
-        `  Config #${index + 1}: ${formatSampleRates(
-          config.minSampleRate,
-          config.maxSampleRate
-        )}, ${config.channels} channels, ${config.sampleFormat} format`
-      );
-    });
-  } else {
-    result.push('Output Capabilities: None');
-  }
+  return result;
+}
 
-  return result.join('\n');
+// Helper function to query and format device capabilities
+function formatDeviceCapabilities(deviceId) {
+  const inputCapabilities = getCapabilities(() =>
+    cpal.getSupportedInputConfigs(deviceId)
+  );
+  const outputCapabilities = getCapabilities(() =>
+    cpal.getSupportedOutputConfigs(deviceId)
+  );
+
+  return [
+    ...formatSupportedConfigs('Input', inputCapabilities),
+    ...formatSupportedConfigs('Output', outputCapabilities),
+  ].join('\n');
 }
 
 // Main function
@@ -80,7 +85,12 @@ async function main() {
         console.log(
           `  Default Output: ${device.isDefaultOutput ? 'Yes' : 'No'}`
         );
-        console.log(`  ${formatDeviceCapabilities(device)}`);
+        console.log(
+          formatDeviceCapabilities(device.deviceId)
+            .split('\n')
+            .map((line) => `  ${line}`)
+            .join('\n')
+        );
         console.log('');
       });
     } catch (error) {

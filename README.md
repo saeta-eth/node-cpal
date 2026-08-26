@@ -261,17 +261,34 @@ console.log(`Stream is ${isActive ? 'active' : 'inactive'}`);
 ## Type Definitions
 
 ```typescript
+type SampleFormat =
+  | 'i8'
+  | 'i16'
+  | 'i24'
+  | 'i32'
+  | 'i64'
+  | 'u8'
+  | 'u16'
+  | 'u24'
+  | 'u32'
+  | 'u64'
+  | 'f32'
+  | 'f64'
+  | 'dsdu8'
+  | 'dsdu16'
+  | 'dsdu32';
+
 interface AudioDeviceConfig {
   minSampleRate: number;
   maxSampleRate: number;
   channels: number;
-  format: 'i16' | 'u16' | 'f32';
+  format: SampleFormat;
 }
 
 interface StreamConfig {
   sampleRate: number;
   channels: number;
-  format: 'i16' | 'u16' | 'f32';
+  sampleFormat: SampleFormat;
 }
 
 interface StreamHandle {
