@@ -12,36 +12,35 @@ describe('Stream Write Tests', () => {
   let outputStream;
   let config;
 
-  before(() => {
-    // Get the default output device
+  before(function () {
     outputDevice = getTestDevice(false);
+    if (!outputDevice) {
+      this.skip();
+    }
 
-    // Get a suitable configuration for the device
     config = getTestConfig(outputDevice, false);
-
-    // Ensure we're using float32 format
-    config.format = 'f32';
+    if (!config) {
+      this.skip();
+    }
   });
 
-  after(() => {
-    // Clean up any streams that might still be open
+  beforeEach(() => {
+    outputStream = cpal.createStream(
+      outputDevice.deviceId,
+      false,
+      config,
+      () => {}
+    );
+  });
+
+  afterEach(() => {
     if (outputStream) {
-      try {
-        cpal.closeStream(outputStream);
-      } catch (e) {
-        console.error('Error closing stream:', e);
-      }
+      cpal.closeStream(outputStream);
+      outputStream = null;
     }
   });
 
   it('should create an output stream', () => {
-    outputStream = cpal.createStream(
-      outputDevice,
-      false, // output stream
-      config,
-      () => {} // No callback needed for output
-    );
-
     assert(outputStream, 'Should return a valid stream ID');
     assert(
       cpal.isStreamActive(outputStream),
@@ -101,9 +100,6 @@ describe('Stream Write Tests', () => {
     // Pause the stream
     cpal.pauseStream(outputStream);
 
-    // Wait a moment for the pause to take effect
-    await sleep(100);
-
     // Verify stream is paused
     assert(
       !cpal.isStreamActive(outputStream),
@@ -126,9 +122,6 @@ describe('Stream Write Tests', () => {
 
     // Resume the stream
     cpal.resumeStream(outputStream);
-
-    // Wait a moment for the resume to take effect
-    await sleep(100);
 
     // Verify stream is active again
     assert(

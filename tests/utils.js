@@ -24,11 +24,23 @@ function generateSineWave(
   return data;
 }
 
+function getDeviceId(device) {
+  if (typeof device === 'string') {
+    return device;
+  }
+
+  if (device && typeof device.deviceId === 'string') {
+    return device.deviceId;
+  }
+
+  throw new TypeError('Expected an audio device with a deviceId');
+}
+
 function createTestStream(device, isInput, config) {
   return new Promise((resolve, reject) => {
     try {
       const stream = cpal.createStream(
-        device,
+        getDeviceId(device),
         isInput,
         {
           channels: Number(config.channels),
@@ -49,24 +61,52 @@ function createTestStream(device, isInput, config) {
 }
 
 function getTestConfig(device, isInput = false) {
-  try {
-    const config = isInput
-      ? cpal.getDefaultInputConfig(device)
-      : cpal.getDefaultOutputConfig(device);
-
-    // Ensure all fields are numbers
-    return {
-      channels: Number(config.channels),
-      sampleRate: Number(config.sampleRate),
-      format: String(config.format),
-    };
-  } catch (e) {
-    if (isInput) {
-      console.log('No input config available, using output config');
-      return getTestConfig(device, false);
-    }
-    throw e;
+  if (!device) {
+    return null;
   }
+
+  const deviceId = getDeviceId(device);
+  let supportedConfigs;
+
+  try {
+    supportedConfigs = isInput
+      ? cpal.getSupportedInputConfigs(deviceId)
+      : cpal.getSupportedOutputConfigs(deviceId);
+  } catch (error) {
+    if (/does not support (input|output)/i.test(error.message)) {
+      return null;
+    }
+    throw error;
+  }
+
+  const floatConfigs = supportedConfigs.filter(
+    (supportedConfig) => supportedConfig.format === 'f32'
+  );
+  if (floatConfigs.length === 0) {
+    return null;
+  }
+
+  const defaultConfig = isInput
+    ? cpal.getDefaultInputConfig(deviceId)
+    : cpal.getDefaultOutputConfig(deviceId);
+  const selectedConfig =
+    floatConfigs.find(
+      (supportedConfig) =>
+        supportedConfig.channels === defaultConfig.channels &&
+        defaultConfig.sampleRate >= supportedConfig.minSampleRate &&
+        defaultConfig.sampleRate <= supportedConfig.maxSampleRate
+    ) || floatConfigs[0];
+  const sampleRate =
+    defaultConfig.sampleRate >= selectedConfig.minSampleRate &&
+    defaultConfig.sampleRate <= selectedConfig.maxSampleRate
+      ? defaultConfig.sampleRate
+      : selectedConfig.minSampleRate;
+
+  return {
+    channels: Number(selectedConfig.channels),
+    sampleRate: Number(sampleRate),
+    format: selectedConfig.format,
+  };
 }
 
 function getTestDevice(isInput = false) {
@@ -74,12 +114,11 @@ function getTestDevice(isInput = false) {
     return isInput
       ? cpal.getDefaultInputDevice()
       : cpal.getDefaultOutputDevice();
-  } catch (e) {
-    if (isInput) {
-      console.log('No input device available, using output device');
-      return cpal.getDefaultOutputDevice();
+  } catch (error) {
+    if (/No default (input|output) device found/i.test(error.message)) {
+      return null;
     }
-    throw e;
+    throw error;
   }
 }
 
@@ -88,11 +127,7 @@ async function withTestStream(device, isInput, config, callback) {
   try {
     await callback(stream);
   } finally {
-    try {
-      cpal.closeStream(stream);
-    } catch (e) {
-      console.error('Error closing stream:', e);
-    }
+    cpal.closeStream(stream);
   }
 }
 
@@ -100,16 +135,17 @@ async function withTestStream(device, isInput, config, callback) {
 function getMemoryUsage() {
   const usage = process.memoryUsage();
   return {
-    heapTotal: Math.round(usage.heapTotal / (1024 * 1024)),
-    heapUsed: Math.round(usage.heapUsed / (1024 * 1024)),
-    external: Math.round(usage.external / (1024 * 1024)),
-    rss: Math.round(usage.rss / (1024 * 1024)),
+    heapTotal: usage.heapTotal,
+    heapUsed: usage.heapUsed,
+    external: usage.external,
+    rss: usage.rss,
   };
 }
 
 module.exports = {
   sleep,
   generateSineWave,
+  getDeviceId,
   createTestStream,
   getTestConfig,
   getTestDevice,

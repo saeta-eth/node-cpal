@@ -16,9 +16,16 @@ describe('Performance Tests', () => {
   const ITERATION_COUNT = 50;
   const TEST_DURATION = 5000; // 5 seconds
 
-  before(() => {
-    device = getTestDevice();
-    config = getTestConfig(device);
+  before(function () {
+    device = getTestDevice(false);
+    if (!device) {
+      this.skip();
+    }
+
+    config = getTestConfig(device, false);
+    if (!config) {
+      this.skip();
+    }
   });
 
   it('should handle rapid stream creation/destruction', async () => {
@@ -27,7 +34,12 @@ describe('Performance Tests', () => {
 
     try {
       for (let i = 0; i < ITERATION_COUNT; i++) {
-        const stream = cpal.createStream(device, false, config, () => {});
+        const stream = cpal.createStream(
+          device.deviceId,
+          false,
+          config,
+          () => {}
+        );
         streams.push(stream);
 
         // Write a small buffer to ensure stream is active
@@ -43,13 +55,7 @@ describe('Performance Tests', () => {
       }
     } finally {
       // Clean up all streams
-      streams.forEach((stream) => {
-        try {
-          cpal.closeStream(stream);
-        } catch (e) {
-          console.warn('Error closing stream:', e);
-        }
-      });
+      streams.forEach((stream) => cpal.closeStream(stream));
     }
 
     const endTime = Date.now();
@@ -91,7 +97,12 @@ describe('Performance Tests', () => {
     try {
       // Create multiple streams with different frequencies
       for (let i = 0; i < STREAM_COUNT; i++) {
-        const stream = cpal.createStream(device, false, config, () => {});
+        const stream = cpal.createStream(
+          device.deviceId,
+          false,
+          config,
+          () => {}
+        );
         streams.push(stream);
       }
 
@@ -120,23 +131,18 @@ describe('Performance Tests', () => {
       assert(memoryDiff < 50 * 1024 * 1024, 'Excessive memory usage detected');
     } finally {
       // Clean up all streams
-      streams.forEach((stream) => {
-        try {
-          cpal.closeStream(stream);
-        } catch (e) {
-          console.warn('Error closing stream:', e);
-        }
-      });
+      streams.forEach((stream) => cpal.closeStream(stream));
     }
   });
 
   it('should handle rapid audio writes', async () => {
     const writeCount = 100;
+    const bufferDuration = 0.01;
     const buffer = generateSineWave(
       440,
       config.sampleRate,
       config.channels,
-      0.01
+      bufferDuration
     );
 
     await withTestStream(device, false, config, async (stream) => {
@@ -144,7 +150,7 @@ describe('Performance Tests', () => {
 
       for (let i = 0; i < writeCount; i++) {
         cpal.writeToStream(stream, buffer);
-        await sleep(1); // Small delay to prevent overwhelming the stream
+        await sleep(bufferDuration * 1000);
       }
 
       const endTime = Date.now();
