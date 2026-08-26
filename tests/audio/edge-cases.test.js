@@ -1,11 +1,11 @@
 const assert = require('assert');
-const cpal = require('../');
+const cpal = require('../..');
 const {
   generateSineWave,
   getTestConfig,
   getTestDevice,
   withTestStream,
-} = require('./utils');
+} = require('../helpers/hardware');
 
 describe('Edge Cases', () => {
   let device;
@@ -144,7 +144,9 @@ describe('Edge Cases', () => {
       for (let i = 0; i < 10; i++) {
         cpal.writeToStream(stream, buffer);
         cpal.pauseStream(stream);
+        assert.strictEqual(cpal.isStreamActive(stream), false);
         cpal.resumeStream(stream);
+        assert.strictEqual(cpal.isStreamActive(stream), true);
       }
     } finally {
       cpal.closeStream(stream);
@@ -193,6 +195,10 @@ describe('Edge Cases', () => {
     } finally {
       streams.forEach((stream) => cpal.closeStream(stream));
     }
+
+    streams.forEach((stream) => {
+      assert.strictEqual(cpal.isStreamActive(stream), false);
+    });
   });
 
   it('should handle stream closure during active playback', async () => {
@@ -221,21 +227,22 @@ describe('Edge Cases', () => {
     }
   });
 
-  it('should handle invalid audio data values', async () => {
+  it('should reject unsupported audio buffer types', async () => {
     await withTestStream(device, false, config, async (stream) => {
-      const buffer = new Float32Array(
-        config.sampleRate * config.channels * 0.1
-      ); // 100ms
+      const invalidBuffers = [
+        new Float64Array(16),
+        new Int16Array(16),
+        new Uint8Array(16),
+        Array(16).fill(0),
+      ];
 
-      // Test with invalid values
-      buffer.fill(Number.POSITIVE_INFINITY);
-      cpal.writeToStream(stream, buffer);
-
-      buffer.fill(Number.NEGATIVE_INFINITY);
-      cpal.writeToStream(stream, buffer);
-
-      buffer.fill(Number.NaN);
-      cpal.writeToStream(stream, buffer);
+      invalidBuffers.forEach((buffer) => {
+        assert.throws(
+          () => cpal.writeToStream(stream, buffer),
+          /failed to downcast|Float32Array/i
+        );
+      });
+      assert(cpal.isStreamActive(stream));
     });
   });
 });

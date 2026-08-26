@@ -15,6 +15,9 @@ export type SampleFormat =
   | 'dsdu16'
   | 'dsdu32';
 
+export type StreamId = string;
+export type StreamCallback = (data: Float32Array) => void;
+
 export interface AudioDeviceConfig {
   minSampleRate: number;
   maxSampleRate: number;
@@ -25,6 +28,9 @@ export interface AudioDeviceConfig {
 export interface StreamConfig {
   sampleRate: number;
   channels: number;
+}
+
+export interface DefaultStreamConfig extends StreamConfig {
   sampleFormat: SampleFormat;
 }
 
@@ -41,38 +47,35 @@ export interface AudioHost {
   name: string;
 }
 
-export interface StreamHandle {
-  deviceId: string;
-  streamId: string;
-}
-
-// Device and host enumeration
 export function getHosts(): AudioHost[];
 export function getDevices(hostId?: string): AudioDevice[];
 export function getDefaultOutputDevice(): AudioDevice;
 export function getDefaultInputDevice(): AudioDevice;
 
-// Stream configuration
-export function getSupportedInputConfigs(deviceId: string): AudioDeviceConfig[];
+export function getSupportedInputConfigs(
+  deviceId: string
+): AudioDeviceConfig[];
 export function getSupportedOutputConfigs(
   deviceId: string
 ): AudioDeviceConfig[];
-export function getDefaultInputConfig(deviceId: string): StreamConfig;
-export function getDefaultOutputConfig(deviceId: string): StreamConfig;
+export function getDefaultInputConfig(
+  deviceId: string
+): DefaultStreamConfig;
+export function getDefaultOutputConfig(
+  deviceId: string
+): DefaultStreamConfig;
+export function getSupportedFormats(deviceId: string): SampleFormat[];
+export function getSupportedSampleRates(deviceId: string): number[];
+export function getMaxChannels(deviceId: string): number;
 
-// Stream control
-export interface AudioStreamOptions {
-  deviceId: string;
-  config: StreamConfig;
-  onData?: (data: Float32Array) => void; // For input streams
-}
-
-export function createInputStream(options: AudioStreamOptions): StreamHandle;
-export function createOutputStream(options: AudioStreamOptions): StreamHandle;
-export function writeToStream(
-  streamHandle: StreamHandle,
-  data: Float32Array
-): void;
-export function pauseStream(streamHandle: StreamHandle): void;
-export function resumeStream(streamHandle: StreamHandle): void;
-export function closeStream(streamHandle: StreamHandle): void;
+export function createStream(
+  deviceId: string,
+  isInput: boolean,
+  config: StreamConfig,
+  callback: StreamCallback
+): StreamId;
+export function writeToStream(streamId: StreamId, data: Float32Array): void;
+export function pauseStream(streamId: StreamId): void;
+export function resumeStream(streamId: StreamId): void;
+export function closeStream(streamId: StreamId): void;
+export function isStreamActive(streamId: StreamId): boolean;

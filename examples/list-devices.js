@@ -72,8 +72,7 @@ async function main() {
 
     console.log('=== Audio Devices ===');
     try {
-      // Get devices from the default host
-      const devices = cpal.getDevices();
+      const devices = hosts.flatMap((host) => cpal.getDevices(host.id));
       console.log(`Found ${devices.length} audio devices\n`);
 
       // Display all devices with their capabilities

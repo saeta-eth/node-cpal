@@ -12,6 +12,7 @@ try {
 } catch (e) {
   cpal = require('node-cpal');
 }
+const { getF32StreamConfig } = require('./f32-config');
 
 // Configuration
 const DURATION_SECONDS = 30; // Run for 30 seconds
@@ -74,31 +75,14 @@ async function main() {
       return;
     }
 
-    const defaultConfig = cpal.getDefaultInputConfig(inputDevice.deviceId);
-    let selectedConfig = defaultConfig;
-
-    if (defaultConfig.sampleFormat !== 'f32') {
-      const floatConfig = cpal
-        .getSupportedInputConfigs(inputDevice.deviceId)
-        .find((config) => config.format === 'f32');
-
-      if (!floatConfig) {
-        console.error('The input device does not support f32 audio');
-        return;
-      }
-
-      selectedConfig = {
-        sampleRate: Math.min(
-          Math.max(defaultConfig.sampleRate, floatConfig.minSampleRate),
-          floatConfig.maxSampleRate
-        ),
-        channels: floatConfig.channels,
-        sampleFormat: 'f32',
-      };
-    }
+    const selectedConfig = getF32StreamConfig(
+      cpal,
+      inputDevice.deviceId,
+      true
+    );
 
     console.log(
-      `Using configuration: ${selectedConfig.sampleRate} Hz, ${selectedConfig.channels} channels, ${selectedConfig.sampleFormat} format`
+      `Using configuration: ${selectedConfig.sampleRate} Hz, ${selectedConfig.channels} channels, f32 format`
     );
     console.log(`\nAudio Visualizer - Running for ${DURATION_SECONDS} seconds`);
     console.log('Make some noise to see the visualization!');

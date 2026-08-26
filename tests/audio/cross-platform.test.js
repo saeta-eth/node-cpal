@@ -1,7 +1,11 @@
 const assert = require('assert');
-const cpal = require('../');
+const cpal = require('../..');
 const os = require('os');
-const { getTestConfig, getTestDevice } = require('./utils');
+const {
+  assertStreamCreationThrows,
+  getTestConfig,
+  getTestDevice,
+} = require('../helpers/hardware');
 
 const SAMPLE_FORMATS = new Set([
   'i8',
@@ -118,22 +122,27 @@ describe('Cross-Platform Tests', () => {
       this.skip();
     }
 
-    assert.throws(() => {
-      cpal.createStream('invalid-device', false, config, () => {});
-    }, /Device not found/);
+    assertStreamCreationThrows(
+      () => cpal.createStream('invalid-device', false, config, () => {}),
+      /Device not found/
+    );
 
     const invalidConfig = {
       channels: 999,
       sampleRate: 999999999,
       format: 'invalid-format',
     };
-    assert.throws(() => {
-      cpal.createStream(device.deviceId, false, invalidConfig, () => {});
-    }, /Failed to build output stream:.*not supported/i);
+    assertStreamCreationThrows(
+      () =>
+        cpal.createStream(device.deviceId, false, invalidConfig, () => {}),
+      /Failed to build output stream:.*not supported/i
+    );
 
-    assert.throws(() => {
-      cpal.createStream(device.deviceId, true, config, 'not-a-function');
-    }, /failed to downcast any to function/i);
+    assertStreamCreationThrows(
+      () =>
+        cpal.createStream(device.deviceId, true, config, 'not-a-function'),
+      /failed to downcast any to function/i
+    );
   });
 
   it('should expose device identifiers for the selected host', function () {

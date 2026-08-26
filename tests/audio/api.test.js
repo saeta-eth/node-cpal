@@ -1,10 +1,11 @@
-const cpal = require('../');
+const cpal = require('../..');
 const assert = require('assert');
 const {
   generateSineWave,
+  assertStreamCreationThrows,
   getTestConfig,
   getTestDevice,
-} = require('./utils');
+} = require('../helpers/hardware');
 
 const SAMPLE_FORMATS = new Set([
   'i8',
@@ -326,18 +327,20 @@ describe('CPAL Audio Tests', () => {
         this.skip();
       }
 
-      assert.throws(() => {
-        cpal.createStream(
-          device.deviceId,
-          false,
-          {
-            channels: 0,
-            sampleRate: 0,
-            format: 'invalid',
-          },
-          () => {}
-        );
-      }, /Failed to build output stream|invalid configuration/i);
+      assertStreamCreationThrows(
+        () =>
+          cpal.createStream(
+            device.deviceId,
+            false,
+            {
+              channels: 0,
+              sampleRate: 0,
+              format: 'invalid',
+            },
+            () => {}
+          ),
+        /Failed to build output stream|invalid configuration/i
+      );
     });
   });
 });

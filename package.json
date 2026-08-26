@@ -5,7 +5,14 @@
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
-    "test": "mocha tests/**/*.js --timeout 10000",
+    "test": "npm run test:unit && npm run test:types && npm run test:rust",
+    "test:unit": "mocha \"tests/unit/**/*.test.js\" --timeout 5000",
+    "test:types": "tsc --project tests/types/tsconfig.json",
+    "test:rust": "cargo test --lib",
+    "test:audio": "mocha \"tests/audio/**/*.test.js\" --timeout 10000",
+    "test:stress": "mocha \"tests/stress/**/*.test.js\" --timeout 20000",
+    "test:hardware": "npm run test:audio && npm run test:stress",
+    "benchmark:audio": "mocha \"tests/benchmarks/**/*.benchmark.js\" --timeout 20000",
     "cargo-build": "cargo build --message-format=json-render-diagnostics > cargo.log",
     "cross-build": "cross build --message-format=json-render-diagnostics > cross.log",
     "postcargo-build": "neon dist < cargo.log",
@@ -27,10 +34,11 @@
   "devDependencies": {
     "@neon-rs/cli": "0.1.82",
     "@types/node": "^20.0.0",
-    "mocha": "^10.8.2"
+    "mocha": "^10.8.2",
+    "typescript": "4.9.5"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=22.0.0"
   },
   "repository": {
     "type": "git",

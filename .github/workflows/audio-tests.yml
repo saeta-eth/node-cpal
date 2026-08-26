@@ -1,0 +1,64 @@
+name: Audio Hardware Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Hardware suite to run
+        required: true
+        default: correctness
+        type: choice
+        options:
+          - correctness
+          - stress
+          - benchmark
+          - all
+
+permissions:
+  contents: read
+
+jobs:
+  audio:
+    name: ${{ inputs.suite }} on audio hardware
+    runs-on:
+      - self-hosted
+      - audio
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Report runner environment
+        run: |
+          node -e "console.log({ platform: process.platform, arch: process.arch, node: process.version })"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build native addon
+        run: npm run build
+
+      - name: Run audio correctness tests
+        if: inputs.suite == 'correctness' || inputs.suite == 'all'
+        run: npm run test:audio
+
+      - name: Run audio stress tests
+        if: inputs.suite == 'stress' || inputs.suite == 'all'
+        run: npm run test:stress
+
+      - name: Run report-only audio benchmarks
+        if: inputs.suite == 'benchmark' || inputs.suite == 'all'
+        run: npm run benchmark:audio

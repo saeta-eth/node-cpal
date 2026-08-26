@@ -1,5 +1,3 @@
-const cpal = require('../');
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -36,49 +34,7 @@ function getDeviceId(device) {
   throw new TypeError('Expected an audio device with a deviceId');
 }
 
-function createTestStream(device, isInput, config) {
-  return new Promise((resolve, reject) => {
-    try {
-      const stream = cpal.createStream(
-        getDeviceId(device),
-        isInput,
-        {
-          channels: Number(config.channels),
-          sampleRate: Number(config.sampleRate),
-          format: String(config.format),
-        },
-        (data) => {
-          if (isInput && data) {
-            // Handle input data if needed
-          }
-        }
-      );
-      resolve(stream);
-    } catch (e) {
-      reject(e);
-    }
-  });
-}
-
-function getTestConfig(device, isInput = false) {
-  if (!device) {
-    return null;
-  }
-
-  const deviceId = getDeviceId(device);
-  let supportedConfigs;
-
-  try {
-    supportedConfigs = isInput
-      ? cpal.getSupportedInputConfigs(deviceId)
-      : cpal.getSupportedOutputConfigs(deviceId);
-  } catch (error) {
-    if (/does not support (input|output)/i.test(error.message)) {
-      return null;
-    }
-    throw error;
-  }
-
+function selectF32Config(supportedConfigs, defaultConfig) {
   const floatConfigs = supportedConfigs.filter(
     (supportedConfig) => supportedConfig.format === 'f32'
   );
@@ -86,9 +42,6 @@ function getTestConfig(device, isInput = false) {
     return null;
   }
 
-  const defaultConfig = isInput
-    ? cpal.getDefaultInputConfig(deviceId)
-    : cpal.getDefaultOutputConfig(deviceId);
   const selectedConfig =
     floatConfigs.find(
       (supportedConfig) =>
@@ -105,33 +58,29 @@ function getTestConfig(device, isInput = false) {
   return {
     channels: Number(selectedConfig.channels),
     sampleRate: Number(sampleRate),
-    format: selectedConfig.format,
+    format: 'f32',
   };
 }
 
-function getTestDevice(isInput = false) {
-  try {
-    return isInput
-      ? cpal.getDefaultInputDevice()
-      : cpal.getDefaultOutputDevice();
-  } catch (error) {
-    if (/No default (input|output) device found/i.test(error.message)) {
-      return null;
-    }
-    throw error;
+function summarizeDurations(values) {
+  if (values.length === 0) {
+    throw new TypeError('Expected at least one duration');
   }
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const percentile = (value) => {
+    const index = Math.ceil((value / 100) * sorted.length) - 1;
+    return sorted[Math.max(0, index)];
+  };
+
+  return {
+    min: sorted[0],
+    median: percentile(50),
+    p95: percentile(95),
+    max: sorted[sorted.length - 1],
+  };
 }
 
-async function withTestStream(device, isInput, config, callback) {
-  const stream = await createTestStream(device, isInput, config);
-  try {
-    await callback(stream);
-  } finally {
-    cpal.closeStream(stream);
-  }
-}
-
-// Memory usage helper
 function getMemoryUsage() {
   const usage = process.memoryUsage();
   return {
@@ -146,9 +95,7 @@ module.exports = {
   sleep,
   generateSineWave,
   getDeviceId,
-  createTestStream,
-  getTestConfig,
-  getTestDevice,
-  withTestStream,
+  selectF32Config,
+  summarizeDurations,
   getMemoryUsage,
 };
