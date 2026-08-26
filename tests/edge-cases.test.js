@@ -1,7 +1,6 @@
 const assert = require('assert');
 const cpal = require('../');
 const {
-  sleep,
   generateSineWave,
   getTestConfig,
   getTestDevice,
@@ -12,13 +11,25 @@ describe('Edge Cases', () => {
   let device;
   let config;
 
-  before(() => {
-    device = getTestDevice();
-    config = getTestConfig(device);
+  before(function () {
+    device = getTestDevice(false);
+    if (!device) {
+      this.skip();
+    }
+
+    config = getTestConfig(device, false);
+    if (!config) {
+      this.skip();
+    }
   });
 
   it('should handle zero-length audio buffers', async () => {
-    const stream = cpal.createStream(device, false, config, () => {});
+    const stream = cpal.createStream(
+      device.deviceId,
+      false,
+      config,
+      () => {}
+    );
     try {
       const buffer = new Float32Array(0);
       assert.throws(() => {
@@ -39,20 +50,17 @@ describe('Edge Cases', () => {
         0.001
       );
       cpal.writeToStream(stream, buffer);
-      await sleep(100);
     });
   });
 
-  it('should handle multiple format changes', async () => {
-    const configs = cpal.getSupportedOutputConfigs(device);
+  it('should handle multiple supported f32 configurations', async function () {
+    const configs = cpal
+      .getSupportedOutputConfigs(device.deviceId)
+      .filter((supportedConfig) => supportedConfig.format === 'f32');
     if (configs.length < 2) {
-      console.log(
-        'Device only supports one format, skipping format change test'
-      );
-      return;
+      this.skip();
     }
 
-    // Test first two supported configurations
     for (let i = 0; i < 2; i++) {
       const testConfig = {
         channels: configs[i].channels,
@@ -68,42 +76,63 @@ describe('Edge Cases', () => {
           0.2
         );
         cpal.writeToStream(stream, buffer);
-        await sleep(300);
       });
     }
   });
 
   it('should handle maximum supported values', async () => {
-    const configs = cpal.getSupportedOutputConfigs(device);
-    let maxChannels = 0;
-    let maxSampleRate = 0;
+    const configs = cpal
+      .getSupportedOutputConfigs(device.deviceId)
+      .filter((supportedConfig) => supportedConfig.format === 'f32');
+    const maxRateConfig = configs.reduce((maximum, supportedConfig) =>
+      supportedConfig.maxSampleRate > maximum.maxSampleRate
+        ? supportedConfig
+        : maximum
+    );
+    const maxChannelConfig = configs.reduce((maximum, supportedConfig) =>
+      supportedConfig.channels > maximum.channels ? supportedConfig : maximum
+    );
+    const testConfigs = [
+      {
+        channels: maxRateConfig.channels,
+        sampleRate: maxRateConfig.maxSampleRate,
+        format: maxRateConfig.format,
+      },
+      {
+        channels: maxChannelConfig.channels,
+        sampleRate: maxChannelConfig.minSampleRate,
+        format: maxChannelConfig.format,
+      },
+    ].filter(
+      (testConfig, index, allConfigs) =>
+        allConfigs.findIndex(
+          (candidate) =>
+            candidate.channels === testConfig.channels &&
+            candidate.sampleRate === testConfig.sampleRate &&
+            candidate.format === testConfig.format
+        ) === index
+    );
 
-    // Find maximum supported values
-    configs.forEach((config) => {
-      maxChannels = Math.max(maxChannels, config.channels);
-      maxSampleRate = Math.max(maxSampleRate, config.maxSampleRate);
-    });
-
-    const testConfig = {
-      channels: maxChannels,
-      sampleRate: maxSampleRate,
-      format: configs[0].format,
-    };
-
-    await withTestStream(device, false, testConfig, async (stream) => {
-      const buffer = generateSineWave(
-        440,
-        testConfig.sampleRate,
-        testConfig.channels,
-        0.2
-      );
-      cpal.writeToStream(stream, buffer);
-      await sleep(300);
-    });
+    for (const testConfig of testConfigs) {
+      await withTestStream(device, false, testConfig, async (stream) => {
+        const buffer = generateSineWave(
+          440,
+          testConfig.sampleRate,
+          testConfig.channels,
+          0.2
+        );
+        cpal.writeToStream(stream, buffer);
+      });
+    }
   });
 
   it('should handle rapid pause/resume cycles', async () => {
-    const stream = cpal.createStream(device, false, config, () => {});
+    const stream = cpal.createStream(
+      device.deviceId,
+      false,
+      config,
+      () => {}
+    );
     const buffer = generateSineWave(
       440,
       config.sampleRate,
@@ -115,17 +144,21 @@ describe('Edge Cases', () => {
       for (let i = 0; i < 10; i++) {
         cpal.writeToStream(stream, buffer);
         cpal.pauseStream(stream);
-        await sleep(50);
         cpal.resumeStream(stream);
-        await sleep(50);
       }
     } finally {
       cpal.closeStream(stream);
     }
   });
 
-  it('should handle multiple streams with different configurations', async () => {
-    const configs = cpal.getSupportedOutputConfigs(device);
+  it('should handle multiple streams with different configurations', async function () {
+    const configs = cpal
+      .getSupportedOutputConfigs(device.deviceId)
+      .filter((supportedConfig) => supportedConfig.format === 'f32');
+    if (configs.length < 2) {
+      this.skip();
+    }
+
     const streams = [];
 
     try {
@@ -137,7 +170,12 @@ describe('Edge Cases', () => {
           sampleRate: config.minSampleRate,
           format: config.format,
         };
-        const stream = cpal.createStream(device, false, testConfig, () => {});
+        const stream = cpal.createStream(
+          device.deviceId,
+          false,
+          testConfig,
+          () => {}
+        );
         streams.push(stream);
       }
 
@@ -152,15 +190,18 @@ describe('Edge Cases', () => {
         );
         cpal.writeToStream(stream, buffer);
       });
-
-      await sleep(300);
     } finally {
       streams.forEach((stream) => cpal.closeStream(stream));
     }
   });
 
   it('should handle stream closure during active playback', async () => {
-    const stream = cpal.createStream(device, false, config, () => {});
+    const stream = cpal.createStream(
+      device.deviceId,
+      false,
+      config,
+      () => {}
+    );
     const buffer = generateSineWave(
       440,
       config.sampleRate,
@@ -168,14 +209,16 @@ describe('Edge Cases', () => {
       1.0
     );
 
-    cpal.writeToStream(stream, buffer);
-    await sleep(100); // Let playback start
-    cpal.closeStream(stream);
-
-    // Verify stream is no longer valid
-    assert.throws(() => {
+    try {
       cpal.writeToStream(stream, buffer);
-    }, /Stream not found/);
+      cpal.closeStream(stream);
+
+      assert.throws(() => {
+        cpal.writeToStream(stream, buffer);
+      }, /Stream not found/);
+    } finally {
+      cpal.closeStream(stream);
+    }
   });
 
   it('should handle invalid audio data values', async () => {
@@ -193,8 +236,6 @@ describe('Edge Cases', () => {
 
       buffer.fill(Number.NaN);
       cpal.writeToStream(stream, buffer);
-
-      await sleep(300);
     });
   });
 });

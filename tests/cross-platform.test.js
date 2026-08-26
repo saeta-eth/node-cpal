@@ -1,203 +1,156 @@
 const assert = require('assert');
 const cpal = require('../');
 const os = require('os');
-const {
-  sleep,
-  generateSineWave,
-  getTestConfig,
-  getTestDevice,
-  withTestStream,
-} = require('./utils');
+const { getTestConfig, getTestDevice } = require('./utils');
+
+const SAMPLE_FORMATS = new Set([
+  'i8',
+  'i16',
+  'i24',
+  'i32',
+  'i64',
+  'u8',
+  'u16',
+  'u24',
+  'u32',
+  'u64',
+  'f32',
+  'f64',
+  'dsdu8',
+  'dsdu16',
+  'dsdu32',
+]);
 
 describe('Cross-Platform Tests', () => {
   let device;
   let config;
 
   before(() => {
-    device = getTestDevice();
-    config = getTestConfig(device);
+    device = getTestDevice(false);
+    config = getTestConfig(device, false);
   });
 
   it('should identify correct host API for platform', () => {
-    const hosts = cpal.getHosts();
-    const platform = os.platform();
+    const hostNames = cpal.getHosts().map((host) => host.name);
 
-    switch (platform) {
+    switch (os.platform()) {
       case 'darwin':
-        assert(
-          hosts.includes('CoreAudio'),
-          'CoreAudio should be available on macOS'
-        );
+        assert(hostNames.includes('CoreAudio'));
         break;
       case 'win32':
-        assert(
-          hosts.some((h) => ['WASAPI', 'DirectSound', 'ASIO'].includes(h)),
-          'Windows should have WASAPI, DirectSound, or ASIO available'
-        );
+        assert(hostNames.some((name) => ['WASAPI', 'ASIO'].includes(name)));
         break;
       case 'linux':
-        assert(
-          hosts.some((h) => ['ALSA', 'PulseAudio', 'JACK'].includes(h)),
-          'Linux should have ALSA, PulseAudio, or JACK available'
-        );
-        break;
-      default:
-        console.log(`Untested platform: ${platform}`);
-    }
-  });
-
-  it('should support platform-specific sample formats', async () => {
-    const supportedFormats = cpal.getSupportedFormats(device);
-    const platform = os.platform();
-
-    // Test common formats across all platforms
-    assert(supportedFormats.includes('f32'), 'f32 format should be supported');
-
-    // Platform-specific format checks
-    switch (platform) {
-      case 'darwin':
-        // macOS typically supports float formats
-        assert(
-          supportedFormats.includes('f32'),
-          'f32 should be supported on macOS'
-        );
-        break;
-      case 'win32':
-        // Windows typically supports both integer and float formats
-        assert(
-          supportedFormats.some((f) => ['i16', 'f32'].includes(f)),
-          'Windows should support i16 or f32'
-        );
-        break;
-      case 'linux':
-        // Linux support varies by sound system
-        console.log('Supported formats on Linux:', supportedFormats);
-        assert(
-          supportedFormats.length > 0,
-          'At least one format should be supported'
-        );
+        assert(hostNames.some((name) => ['ALSA', 'JACK'].includes(name)));
         break;
     }
   });
 
-  it('should handle platform-specific sample rates', async () => {
-    const supportedRates = cpal.getSupportedSampleRates(device);
-    const commonRates = [44100, 48000];
+  it('should expose valid platform sample formats', function () {
+    if (!device) {
+      this.skip();
+    }
 
-    // Common rates should be supported across platforms
-    commonRates.forEach((rate) => {
+    const supportedFormats = cpal.getSupportedFormats(device.deviceId);
+    const outputConfigs = cpal.getSupportedOutputConfigs(device.deviceId);
+
+    assert(supportedFormats.length > 0, 'Should expose at least one format');
+    assert.strictEqual(
+      new Set(supportedFormats).size,
+      supportedFormats.length,
+      'Supported formats should be unique'
+    );
+    supportedFormats.forEach((format) => {
+      assert(SAMPLE_FORMATS.has(format), `Unexpected CPAL format: ${format}`);
+    });
+    outputConfigs.forEach((outputConfig) => {
       assert(
-        supportedRates.includes(rate),
-        `Sample rate ${rate} should be supported`
+        supportedFormats.includes(outputConfig.format),
+        `Missing output format: ${outputConfig.format}`
       );
     });
+  });
 
-    // Platform-specific high sample rate support
-    const platform = os.platform();
-    const highRates = [88200, 96000, 192000];
+  it('should expose sample-rate boundaries from device capabilities', function () {
+    if (!device) {
+      this.skip();
+    }
 
-    console.log(`Supported sample rates on ${platform}:`, supportedRates);
-    console.log(
-      'High sample rate support:',
-      highRates.filter((r) => supportedRates.includes(r))
+    const supportedRates = cpal.getSupportedSampleRates(device.deviceId);
+    const outputConfigs = cpal.getSupportedOutputConfigs(device.deviceId);
+    const sortedRates = [...supportedRates].sort((a, b) => a - b);
+
+    assert(supportedRates.length > 0, 'Should expose supported sample rates');
+    assert.deepStrictEqual(supportedRates, sortedRates);
+    assert.strictEqual(new Set(supportedRates).size, supportedRates.length);
+    supportedRates.forEach((rate) => {
+      assert(Number.isInteger(rate));
+      assert(rate > 0);
+    });
+    outputConfigs.forEach((outputConfig) => {
+      assert(supportedRates.includes(outputConfig.minSampleRate));
+      assert(supportedRates.includes(outputConfig.maxSampleRate));
+    });
+  });
+
+  it('should report the maximum available channel count', function () {
+    if (!device) {
+      this.skip();
+    }
+
+    const configs = cpal.getSupportedOutputConfigs(device.deviceId);
+    try {
+      configs.push(...cpal.getSupportedInputConfigs(device.deviceId));
+    } catch (error) {
+      if (!/does not support input/i.test(error.message)) {
+        throw error;
+      }
+    }
+
+    const expectedMaxChannels = Math.max(
+      ...configs.map((supportedConfig) => supportedConfig.channels)
     );
+    assert.strictEqual(cpal.getMaxChannels(device.deviceId), expectedMaxChannels);
   });
 
-  it('should handle platform-specific channel configurations', async () => {
-    const maxChannels = cpal.getMaxChannels(device);
-    assert(maxChannels >= 2, 'Should support at least stereo output');
-
-    // Test mono recording if input device available
-    const inputDevice = getTestDevice(true);
-    if (inputDevice) {
-      const inputConfig = getTestConfig(inputDevice, true);
-      assert(
-        inputConfig.channels >= 1,
-        'Input device should support at least mono recording'
-      );
+  it('should handle platform-specific error cases', function () {
+    if (!device || !config) {
+      this.skip();
     }
 
-    // Test multichannel output if supported
-    if (maxChannels > 2) {
-      const multiChannelConfig = {
-        ...config,
-        channels: Math.min(maxChannels, 6), // Test up to 5.1 if supported
-      };
-
-      await withTestStream(
-        device,
-        false,
-        multiChannelConfig,
-        async (stream) => {
-          const buffer = generateSineWave(
-            440,
-            multiChannelConfig.sampleRate,
-            multiChannelConfig.channels,
-            0.1
-          );
-          cpal.writeToStream(stream, buffer);
-          await sleep(100);
-        }
-      );
-    }
-  });
-
-  it('should handle platform-specific error cases', () => {
-    // Test invalid device ID
     assert.throws(() => {
-      cpal.createStream({ id: 'invalid-device' }, false, config, () => {});
-    }, /device not found|invalid device|failed to downcast/i);
+      cpal.createStream('invalid-device', false, config, () => {});
+    }, /Device not found/);
 
-    // Test invalid configuration
     const invalidConfig = {
-      channels: 999, // Invalid channel count
-      sampleRate: 999999999, // Invalid sample rate
+      channels: 999,
+      sampleRate: 999999999,
       format: 'invalid-format',
     };
+    assert.throws(() => {
+      cpal.createStream(device.deviceId, false, invalidConfig, () => {});
+    }, /Failed to build output stream:.*not supported/i);
 
     assert.throws(() => {
-      cpal.createStream(device, false, invalidConfig, () => {});
-    }, /invalid configuration|unsupported format|not supported by the device/i);
-
-    // Test invalid callback
-    assert.throws(() => {
-      cpal.createStream(device, true, config, 'not-a-function');
-    }, /invalid callback|callback must be a function|failed to downcast/i);
+      cpal.createStream(device.deviceId, true, config, 'not-a-function');
+    }, /failed to downcast any to function/i);
   });
 
-  it('should handle platform-specific device naming conventions', () => {
-    const devices = cpal.getDevices(cpal.getHosts()[0]);
-    const platform = os.platform();
+  it('should expose device identifiers for the selected host', function () {
+    const hosts = cpal.getHosts();
+    const host = hosts[0];
+    const devices = cpal.getDevices(host.id);
 
-    devices.forEach((device) => {
-      assert(device.name, 'Device should have a name');
-      assert(device.id, 'Device should have an ID');
+    if (devices.length === 0) {
+      this.skip();
+    }
 
-      switch (platform) {
-        case 'darwin':
-          // macOS devices typically include manufacturer info
-          assert(
-            device.name.includes('Built-in') ||
-              device.name.includes('MacBook') ||
-              device.name.includes('External') ||
-              device.name.includes('USB'),
-            'macOS device names should follow platform conventions'
-          );
-          break;
-        case 'win32':
-          // Windows devices typically include driver info
-          assert(
-            device.name.includes('(') ||
-              device.name.includes(')') ||
-              device.name.includes('Device'),
-            'Windows device names should follow platform conventions'
-          );
-          break;
-        case 'linux':
-          // Linux naming varies by sound system
-          console.log('Linux device name format:', device.name);
-          break;
-      }
+    devices.forEach((hostDevice) => {
+      assert.strictEqual(typeof hostDevice.name, 'string');
+      assert(hostDevice.name.length > 0);
+      assert.strictEqual(typeof hostDevice.deviceId, 'string');
+      assert(hostDevice.deviceId.length > 0);
+      assert.strictEqual(hostDevice.hostId, host.id);
     });
   });
 });

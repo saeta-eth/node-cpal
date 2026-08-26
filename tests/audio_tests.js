@@ -1,243 +1,312 @@
 const cpal = require('../');
 const assert = require('assert');
+const {
+  generateSineWave,
+  getTestConfig,
+  getTestDevice,
+} = require('./utils');
 
-// Utility function to sleep for a given duration
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const SAMPLE_FORMATS = new Set([
+  'i8',
+  'i16',
+  'i24',
+  'i32',
+  'i64',
+  'u8',
+  'u16',
+  'u24',
+  'u32',
+  'u64',
+  'f32',
+  'f64',
+  'dsdu8',
+  'dsdu16',
+  'dsdu32',
+]);
 
-// Test configuration
-const TEST_DURATION = 2000; // 2 seconds for audio tests
-const SAMPLE_RATE = 48000;
-const CHANNELS = 2;
+function assertDevice(device) {
+  assert.strictEqual(typeof device.name, 'string');
+  assert(device.name.length > 0, 'Device should have a name');
+  assert.strictEqual(typeof device.deviceId, 'string');
+  assert(device.deviceId.length > 0, 'Device should have an ID');
+  assert.strictEqual(typeof device.hostId, 'string');
+  assert.strictEqual(typeof device.isDefaultInput, 'boolean');
+  assert.strictEqual(typeof device.isDefaultOutput, 'boolean');
+}
+
+function assertSupportedConfig(config) {
+  assert(config.channels > 0, 'Should have a valid channel count');
+  assert(config.minSampleRate > 0, 'Should have a valid minimum sample rate');
+  assert(
+    config.maxSampleRate >= config.minSampleRate,
+    'Maximum sample rate should be >= minimum'
+  );
+  assert(
+    SAMPLE_FORMATS.has(config.format),
+    `Should expose a valid CPAL format, received ${config.format}`
+  );
+}
+
+function assertDefaultConfig(config) {
+  assert(config.channels > 0, 'Should have a valid channel count');
+  assert(config.sampleRate > 0, 'Should have a valid sample rate');
+  assert(
+    SAMPLE_FORMATS.has(config.sampleFormat),
+    `Should expose a valid CPAL format, received ${config.sampleFormat}`
+  );
+}
 
 describe('CPAL Audio Tests', () => {
-  // Host enumeration tests
   describe('Host Management', () => {
     it('should list available hosts', () => {
       const hosts = cpal.getHosts();
       assert(Array.isArray(hosts), 'Hosts should be an array');
       assert(hosts.length > 0, 'Should have at least one host');
-      assert.strictEqual(
-        hosts[0],
-        'CoreAudio',
-        'Should have CoreAudio host on macOS'
-      );
+
+      for (const host of hosts) {
+        assert.strictEqual(typeof host.id, 'string');
+        assert(host.id.length > 0, 'Host should have an ID');
+        assert.strictEqual(typeof host.name, 'string');
+        assert(host.name.length > 0, 'Host should have a name');
+      }
     });
 
-    it('should list devices for each host', () => {
+    it('should list devices for each host', function () {
       const hosts = cpal.getHosts();
-      for (const host of hosts) {
-        const devices = cpal.getDevices(host);
-        assert(Array.isArray(devices), 'Devices should be an array');
-        assert(devices.length > 0, 'Should have at least one device');
+      let deviceCount = 0;
 
-        // Check device object structure
-        const device = devices[0];
-        assert(device.id, 'Device should have an ID');
-        assert(device.name, 'Device should have a name');
-        assert(
-          typeof device.isDefaultInput === 'boolean',
-          'Device should indicate if it is default input'
-        );
-        assert(
-          typeof device.isDefaultOutput === 'boolean',
-          'Device should indicate if it is default output'
-        );
+      for (const host of hosts) {
+        const devices = cpal.getDevices(host.id);
+        assert(Array.isArray(devices), 'Devices should be an array');
+
+        for (const device of devices) {
+          assertDevice(device);
+          assert.strictEqual(device.hostId, host.id);
+          deviceCount++;
+        }
+      }
+
+      if (deviceCount === 0) {
+        this.skip();
       }
     });
   });
 
-  // Device management tests
   describe('Device Management', () => {
     let defaultInputDevice;
     let defaultOutputDevice;
 
     before(() => {
-      try {
-        defaultInputDevice = cpal.getDefaultInputDevice();
-      } catch (e) {
-        console.log('No input device available:', e.message);
-      }
-      defaultOutputDevice = cpal.getDefaultOutputDevice();
+      defaultInputDevice = getTestDevice(true);
+      defaultOutputDevice = getTestDevice(false);
     });
 
-    it('should get default output device', () => {
-      assert(defaultOutputDevice, 'Should have a default output device');
+    it('should get default output device', function () {
+      if (!defaultOutputDevice) {
+        this.skip();
+      }
+      assertDevice(defaultOutputDevice);
+      assert.strictEqual(defaultOutputDevice.isDefaultOutput, true);
     });
 
     it('should get default input device if available', function () {
       if (!defaultInputDevice) {
         this.skip();
       }
-      assert(defaultInputDevice, 'Should have a default input device');
+      assertDevice(defaultInputDevice);
+      assert.strictEqual(defaultInputDevice.isDefaultInput, true);
     });
 
-    it('should get supported output configurations', () => {
-      const configs = cpal.getSupportedOutputConfigs(defaultOutputDevice);
+    it('should get supported output configurations', function () {
+      if (!defaultOutputDevice) {
+        this.skip();
+      }
+
+      const configs = cpal.getSupportedOutputConfigs(
+        defaultOutputDevice.deviceId
+      );
       assert(Array.isArray(configs), 'Configs should be an array');
       assert(configs.length > 0, 'Should have at least one config');
-
-      const config = configs[0];
-      assert(config.channels > 0, 'Should have valid channel count');
-      assert(config.minSampleRate > 0, 'Should have valid minimum sample rate');
-      assert(
-        config.maxSampleRate >= config.minSampleRate,
-        'Maximum sample rate should be >= minimum'
-      );
-      assert(
-        ['f32', 'i16', 'u16'].includes(config.format),
-        'Should have valid format'
-      );
+      configs.forEach(assertSupportedConfig);
     });
 
     it('should get supported input configurations if available', function () {
       if (!defaultInputDevice) {
         this.skip();
       }
-      const configs = cpal.getSupportedInputConfigs(defaultInputDevice);
+
+      const configs = cpal.getSupportedInputConfigs(defaultInputDevice.deviceId);
       assert(Array.isArray(configs), 'Configs should be an array');
       assert(configs.length > 0, 'Should have at least one config');
-
-      const config = configs[0];
-      assert(config.channels > 0, 'Should have valid channel count');
-      assert(config.minSampleRate > 0, 'Should have valid minimum sample rate');
-      assert(
-        config.maxSampleRate >= config.minSampleRate,
-        'Maximum sample rate should be >= minimum'
-      );
-      assert(
-        ['f32', 'i16', 'u16'].includes(config.format),
-        'Should have valid format'
-      );
+      configs.forEach(assertSupportedConfig);
     });
 
-    it('should get default output configuration', () => {
-      const config = cpal.getDefaultOutputConfig(defaultOutputDevice);
-      assert(config.channels > 0, 'Should have valid channel count');
-      assert(config.sampleRate > 0, 'Should have valid sample rate');
-      assert(
-        ['f32', 'i16', 'u16'].includes(config.format),
-        'Should have valid format'
+    it('should get default output configuration', function () {
+      if (!defaultOutputDevice) {
+        this.skip();
+      }
+
+      const config = cpal.getDefaultOutputConfig(
+        defaultOutputDevice.deviceId
       );
+      assertDefaultConfig(config);
     });
 
     it('should get default input configuration if available', function () {
       if (!defaultInputDevice) {
         this.skip();
       }
-      const config = cpal.getDefaultInputConfig(defaultInputDevice);
-      assert(config.channels > 0, 'Should have valid channel count');
-      assert(config.sampleRate > 0, 'Should have valid sample rate');
-      assert(
-        ['f32', 'i16', 'u16'].includes(config.format),
-        'Should have valid format'
-      );
+
+      const config = cpal.getDefaultInputConfig(defaultInputDevice.deviceId);
+      assertDefaultConfig(config);
     });
   });
 
-  // Stream management tests
   describe('Stream Management', () => {
     let inputDevice;
     let outputDevice;
-    let inputStream;
-    let outputStream;
-    let receivedData = false;
+    let inputConfig;
+    let outputConfig;
+    const streams = new Set();
+
+    function trackStream(stream) {
+      streams.add(stream);
+      return stream;
+    }
 
     before(() => {
-      try {
-        inputDevice = cpal.getDefaultInputDevice();
-      } catch (e) {
-        console.log('No input device available:', e.message);
+      inputDevice = getTestDevice(true);
+      outputDevice = getTestDevice(false);
+      inputConfig = getTestConfig(inputDevice, true);
+      outputConfig = getTestConfig(outputDevice, false);
+    });
+
+    afterEach(() => {
+      for (const stream of streams) {
+        cpal.closeStream(stream);
       }
-      outputDevice = cpal.getDefaultOutputDevice();
+      streams.clear();
     });
 
-    after(async () => {
-      // Clean up streams
-      if (inputStream) cpal.closeStream(inputStream);
-      if (outputStream) cpal.closeStream(outputStream);
-    });
-
-    it('should create input stream if available', function (done) {
-      if (!inputDevice) {
+    it('should create an input stream if available', async function () {
+      if (!inputDevice || !inputConfig) {
         this.skip();
       }
 
-      const config = {
-        channels: CHANNELS,
-        sampleRate: SAMPLE_RATE,
-        format: 'f32',
-      };
-
-      inputStream = cpal.createStream(inputDevice, true, config, (data) => {
-        assert(
-          data instanceof Float32Array,
-          'Should receive Float32Array data'
+      let inputStream;
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error('Timed out waiting for input audio data')),
+          2000
         );
-        assert(data.length > 0, 'Should receive non-empty data');
-        receivedData = true;
+
+        inputStream = trackStream(
+          cpal.createStream(
+            inputDevice.deviceId,
+            true,
+            inputConfig,
+            (data) => {
+              try {
+                assert(
+                  data instanceof Float32Array,
+                  'Should receive Float32Array data'
+                );
+                assert(data.length > 0, 'Should receive non-empty data');
+                clearTimeout(timeout);
+                resolve();
+              } catch (error) {
+                clearTimeout(timeout);
+                reject(error);
+              }
+            }
+          )
+        );
       });
 
-      assert(inputStream, 'Should return stream ID');
+      assert.strictEqual(typeof inputStream, 'string');
+      assert(cpal.isStreamActive(inputStream));
+    }).timeout(5000);
 
-      // Wait for some data
-      setTimeout(() => {
-        assert(receivedData, 'Should have received audio data');
-        done();
-      }, TEST_DURATION);
-    });
-
-    it('should create output stream', () => {
-      const config = {
-        channels: CHANNELS,
-        sampleRate: SAMPLE_RATE,
-        format: 'f32',
-      };
-
-      outputStream = cpal.createStream(outputDevice, false, config, () => {});
-      assert(outputStream, 'Should return stream ID');
-    });
-
-    it('should write to output stream', () => {
-      // Generate a simple sine wave
-      const sampleCount = SAMPLE_RATE; // 1 second of audio
-      const data = new Float32Array(sampleCount * CHANNELS);
-      const frequency = 440; // A4 note
-
-      for (let i = 0; i < sampleCount; i++) {
-        const value = Math.sin((2 * Math.PI * frequency * i) / SAMPLE_RATE);
-        for (let channel = 0; channel < CHANNELS; channel++) {
-          data[i * CHANNELS + channel] = value * 0.5; // 50% volume
-        }
+    it('should create an output stream', function () {
+      if (!outputDevice || !outputConfig) {
+        this.skip();
       }
+
+      const outputStream = trackStream(
+        cpal.createStream(
+          outputDevice.deviceId,
+          false,
+          outputConfig,
+          () => {}
+        )
+      );
+      assert.strictEqual(typeof outputStream, 'string');
+      assert(outputStream.length > 0, 'Should return a stream ID');
+      assert(cpal.isStreamActive(outputStream));
+    });
+
+    it('should write to an output stream', function () {
+      if (!outputDevice || !outputConfig) {
+        this.skip();
+      }
+
+      const outputStream = trackStream(
+        cpal.createStream(
+          outputDevice.deviceId,
+          false,
+          outputConfig,
+          () => {}
+        )
+      );
+      const data = generateSineWave(
+        440,
+        outputConfig.sampleRate,
+        outputConfig.channels,
+        0.1
+      );
 
       cpal.writeToStream(outputStream, data);
+      assert(cpal.isStreamActive(outputStream));
     });
 
-    it('should pause and resume streams', async () => {
-      // Test output stream
+    it('should pause and resume a stream', function () {
+      if (!outputDevice || !outputConfig) {
+        this.skip();
+      }
+
+      const outputStream = trackStream(
+        cpal.createStream(
+          outputDevice.deviceId,
+          false,
+          outputConfig,
+          () => {}
+        )
+      );
       cpal.pauseStream(outputStream);
-      await sleep(500);
+      assert.strictEqual(cpal.isStreamActive(outputStream), false);
       cpal.resumeStream(outputStream);
-
-      // Test input stream if available
-      if (inputStream) {
-        cpal.pauseStream(inputStream);
-        await sleep(500);
-        cpal.resumeStream(inputStream);
-      }
+      assert.strictEqual(cpal.isStreamActive(outputStream), true);
     });
 
-    it('should close streams', () => {
-      if (inputStream) {
-        cpal.closeStream(inputStream);
-        inputStream = null;
+    it('should close a stream', function () {
+      if (!outputDevice || !outputConfig) {
+        this.skip();
       }
+
+      const outputStream = trackStream(
+        cpal.createStream(
+          outputDevice.deviceId,
+          false,
+          outputConfig,
+          () => {}
+        )
+      );
       cpal.closeStream(outputStream);
-      outputStream = null;
+      streams.delete(outputStream);
+      assert.strictEqual(cpal.isStreamActive(outputStream), false);
     });
   });
 
-  // Error handling tests
   describe('Error Handling', () => {
     it('should handle invalid device IDs', () => {
       assert.throws(() => {
@@ -251,11 +320,15 @@ describe('CPAL Audio Tests', () => {
       }, /Stream not found/);
     });
 
-    it('should handle invalid configurations', () => {
-      const device = cpal.getDefaultOutputDevice();
+    it('should handle invalid configurations', function () {
+      const device = getTestDevice(false);
+      if (!device) {
+        this.skip();
+      }
+
       assert.throws(() => {
         cpal.createStream(
-          device,
+          device.deviceId,
           false,
           {
             channels: 0,
@@ -264,7 +337,7 @@ describe('CPAL Audio Tests', () => {
           },
           () => {}
         );
-      });
+      }, /Failed to build output stream|invalid configuration/i);
     });
   });
 });

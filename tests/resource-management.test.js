@@ -13,9 +13,16 @@ describe('Resource Management Tests', () => {
   let device;
   let config;
 
-  before(() => {
-    device = getTestDevice();
-    config = getTestConfig(device);
+  before(function () {
+    device = getTestDevice(false);
+    if (!device) {
+      this.skip();
+    }
+
+    config = getTestConfig(device, false);
+    if (!config) {
+      this.skip();
+    }
   });
 
   it('should properly clean up resources after stream closure', async () => {
@@ -51,7 +58,12 @@ describe('Resource Management Tests', () => {
   }).timeout(10000);
 
   it('should handle multiple stream lifecycle events properly', async () => {
-    const stream = cpal.createStream(device, false, config, () => {});
+    const stream = cpal.createStream(
+      device.deviceId,
+      false,
+      config,
+      () => {}
+    );
     const buffer = generateSineWave(
       440,
       config.sampleRate,
@@ -59,40 +71,36 @@ describe('Resource Management Tests', () => {
       0.1
     );
 
-    // Test normal write
-    cpal.writeToStream(stream, buffer);
-    await sleep(50);
-
-    // Test pause/resume
-    cpal.pauseStream(stream);
-    await sleep(50);
-    cpal.resumeStream(stream);
-    await sleep(50);
-
-    // Test write after pause/resume
-    cpal.writeToStream(stream, buffer);
-    await sleep(50);
-
-    // Test close
-    cpal.closeStream(stream);
-
-    // Test operations on closed stream
-    assert.throws(() => {
+    try {
       cpal.writeToStream(stream, buffer);
-    }, /stream not found|invalid stream|stream closed/i);
-
-    assert.throws(() => {
       cpal.pauseStream(stream);
-    }, /stream not found|invalid stream|stream closed/i);
-
-    assert.throws(() => {
       cpal.resumeStream(stream);
-    }, /stream not found|invalid stream|stream closed/i);
+      cpal.writeToStream(stream, buffer);
+      cpal.closeStream(stream);
+
+      assert.throws(() => {
+        cpal.writeToStream(stream, buffer);
+      }, /stream not found|invalid stream|stream closed/i);
+
+      assert.throws(() => {
+        cpal.pauseStream(stream);
+      }, /stream not found|invalid stream|stream closed/i);
+
+      assert.throws(() => {
+        cpal.resumeStream(stream);
+      }, /stream not found|invalid stream|stream closed/i);
+    } finally {
+      cpal.closeStream(stream);
+    }
   });
 
-  it('should handle device disconnection gracefully', async () => {
-    // Create a stream with a device that will be "disconnected"
-    const stream = cpal.createStream(device, false, config, () => {});
+  it('should reject an invalid device without disrupting an open stream', async () => {
+    const stream = cpal.createStream(
+      device.deviceId,
+      false,
+      config,
+      () => {}
+    );
     const buffer = generateSineWave(
       440,
       config.sampleRate,
@@ -100,23 +108,16 @@ describe('Resource Management Tests', () => {
       0.1
     );
 
-    // Write some data
-    cpal.writeToStream(stream, buffer);
-    await sleep(50);
-
-    // Simulate device disconnection by trying to use an invalid device
-    const disconnectedDevice = { ...device, id: 'disconnected-device' };
-
-    assert.throws(() => {
-      cpal.createStream(disconnectedDevice, false, config, () => {});
-    }, /device not found|invalid device|failed to downcast/i);
-
-    // Verify that the original stream is still usable
-    cpal.writeToStream(stream, buffer);
-    await sleep(50);
-
-    // Clean up
-    cpal.closeStream(stream);
+    try {
+      cpal.writeToStream(stream, buffer);
+      assert.throws(() => {
+        cpal.createStream('disconnected-device', false, config, () => {});
+      }, /Device not found/);
+      cpal.writeToStream(stream, buffer);
+      assert(cpal.isStreamActive(stream));
+    } finally {
+      cpal.closeStream(stream);
+    }
   }).timeout(5000);
 
   it('should handle resource limits gracefully', async () => {
@@ -127,10 +128,16 @@ describe('Resource Management Tests', () => {
     try {
       for (let i = 0; i < maxStreams; i++) {
         try {
-          const stream = cpal.createStream(device, false, config, () => {});
+          const stream = cpal.createStream(
+            device.deviceId,
+            false,
+            config,
+            () => {}
+          );
           streams.push(stream);
           lastSuccessfulStream = i + 1;
-        } catch (e) {
+        } catch (error) {
+          assert.match(error.message, /Failed to build output stream/i);
           console.log(
             `Failed to create stream after ${lastSuccessfulStream} streams`
           );
@@ -158,34 +165,29 @@ describe('Resource Management Tests', () => {
       }
     } finally {
       // Clean up all streams
-      streams.forEach((stream) => {
-        try {
-          cpal.closeStream(stream);
-        } catch (e) {
-          console.error('Error closing stream:', e);
-        }
-      });
+      streams.forEach((stream) => cpal.closeStream(stream));
     }
   }).timeout(10000);
 
-  it('should handle rapid stream state transitions', async () => {
-    const stream = cpal.createStream(device, false, config, () => {});
+  it('should handle rapid stream state transitions', () => {
+    const stream = cpal.createStream(
+      device.deviceId,
+      false,
+      config,
+      () => {}
+    );
     const iterations = 50;
     const buffer = generateSineWave(
       440,
       config.sampleRate,
       config.channels,
-      0.05
+      0.01
     );
 
     try {
-      for (let i = 0; i < iterations; i++) {
-        cpal.writeToStream(stream, buffer);
-        assert(
-          cpal.isStreamActive(stream),
-          'Stream should be active after write'
-        );
+      cpal.writeToStream(stream, buffer);
 
+      for (let i = 0; i < iterations; i++) {
         cpal.pauseStream(stream);
         assert(
           !cpal.isStreamActive(stream),
@@ -197,9 +199,10 @@ describe('Resource Management Tests', () => {
           cpal.isStreamActive(stream),
           'Stream should be active after resume'
         );
-
-        await sleep(10);
       }
+
+      cpal.writeToStream(stream, buffer);
+      assert(cpal.isStreamActive(stream), 'Stream should accept a final write');
     } finally {
       cpal.closeStream(stream);
     }

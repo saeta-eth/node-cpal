@@ -14,9 +14,16 @@ describe('Benchmark Tests', () => {
   let config;
   let startTime;
 
-  before(() => {
-    device = getTestDevice();
-    config = getTestConfig(device);
+  before(function () {
+    device = getTestDevice(false);
+    if (!device) {
+      this.skip();
+    }
+
+    config = getTestConfig(device, false);
+    if (!config) {
+      this.skip();
+    }
   });
 
   beforeEach(() => {
@@ -65,12 +72,22 @@ describe('Benchmark Tests', () => {
     const timings = [];
 
     for (let i = 0; i < iterations; i++) {
-      const start = process.hrtime.bigint();
-      const stream = cpal.createStream(device, false, config, () => {});
-      const end = process.hrtime.bigint();
-
-      timings.push(Number(end - start) / 1e6); // Convert to milliseconds
-      cpal.closeStream(stream);
+      let stream;
+      try {
+        const start = process.hrtime.bigint();
+        stream = cpal.createStream(
+          device.deviceId,
+          false,
+          config,
+          () => {}
+        );
+        const end = process.hrtime.bigint();
+        timings.push(Number(end - start) / 1e6); // Convert to milliseconds
+      } finally {
+        if (stream) {
+          cpal.closeStream(stream);
+        }
+      }
       await sleep(10);
     }
 
@@ -104,7 +121,12 @@ describe('Benchmark Tests', () => {
       'Buffer size should match expected size'
     );
 
-    const stream = cpal.createStream(device, false, config, () => {});
+    const stream = cpal.createStream(
+      device.deviceId,
+      false,
+      config,
+      () => {}
+    );
     const chunkSize = config.sampleRate * config.channels * 0.1; // 100ms chunks
     const chunks = Math.ceil(buffer.length / chunkSize);
     const timings = [];
@@ -120,12 +142,15 @@ describe('Benchmark Tests', () => {
         const writeEnd = process.hrtime.bigint();
 
         timings.push(Number(writeEnd - writeStart) / 1e6);
-        await sleep(10);
+        const chunkDurationMs =
+          (chunk.length / config.channels / config.sampleRate) * 1000;
+        await sleep(chunkDurationMs);
       }
 
-      const avgTime = timings.reduce((a, b) => a + b) / timings.length;
+      const totalWriteTime = timings.reduce((a, b) => a + b);
+      const avgTime = totalWriteTime / timings.length;
       const throughputMBps =
-        (bufferSize * 4) / (1024 * 1024 * (avgTime / 1000));
+        (bufferSize * 4) / (1024 * 1024 * (totalWriteTime / 1000));
 
       console.log(`Audio processing performance:
                 Average chunk write time: ${avgTime.toFixed(2)}ms
@@ -144,7 +169,12 @@ describe('Benchmark Tests', () => {
     const duration = 10000; // 10 seconds
     const interval = 100; // Check memory every 100ms
     const memoryReadings = [];
-    const stream = cpal.createStream(device, false, config, () => {});
+    const stream = cpal.createStream(
+      device.deviceId,
+      false,
+      config,
+      () => {}
+    );
     const buffer = generateSineWave(
       440,
       config.sampleRate,
@@ -187,7 +217,12 @@ describe('Benchmark Tests', () => {
     const duration = 5000; // 5 seconds
     const interval = 100; // Check CPU usage every 100ms
     const cpuReadings = [];
-    const stream = cpal.createStream(device, false, config, () => {});
+    const stream = cpal.createStream(
+      device.deviceId,
+      false,
+      config,
+      () => {}
+    );
     const buffer = generateSineWave(
       440,
       config.sampleRate,

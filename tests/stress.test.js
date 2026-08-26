@@ -13,9 +13,16 @@ describe('Stress Tests', () => {
   let device;
   let config;
 
-  before(() => {
-    device = getTestDevice();
-    config = getTestConfig(device);
+  before(function () {
+    device = getTestDevice(false);
+    if (!device) {
+      this.skip();
+    }
+
+    config = getTestConfig(device, false);
+    if (!config) {
+      this.skip();
+    }
   });
 
   it('should handle long-running audio streams', async () => {
@@ -66,7 +73,9 @@ describe('Stress Tests', () => {
     try {
       // Create multiple streams
       for (let i = 0; i < streamCount; i++) {
-        streams.push(cpal.createStream(device, false, config, () => {}));
+        streams.push(
+          cpal.createStream(device.deviceId, false, config, () => {})
+        );
       }
 
       // Perform intensive operations
@@ -92,7 +101,7 @@ describe('Stress Tests', () => {
       }
 
       const endMemory = getMemoryUsage();
-      console.log('Memory usage during intensive operations (MB):');
+      console.log('Memory usage during intensive operations:');
       console.log('Start:', startMemory);
       console.log('End:', endMemory);
 
@@ -105,86 +114,108 @@ describe('Stress Tests', () => {
     }
   }).timeout(20000);
 
-  it('should handle rapid device switching', async () => {
-    const devices = cpal.getDevices(cpal.getHosts()[0]);
-    const outputDevices = devices.filter((d) => !d.isDefaultInput);
+  it('should handle rapid device switching', async function () {
+    const outputDevices = cpal
+      .getHosts()
+      .flatMap((host) => cpal.getDevices(host.id))
+      .map((outputDevice) => ({
+        device: outputDevice,
+        config: getTestConfig(outputDevice, false),
+      }))
+      .filter((entry) => entry.config);
 
     if (outputDevices.length < 2) {
-      console.log('Not enough output devices for switching test, skipping');
-      return;
+      this.skip();
     }
 
     const streams = [];
-    const buffer = generateSineWave(
-      440,
-      config.sampleRate,
-      config.channels,
-      0.1
-    );
 
     try {
-      // Create streams for each device
-      for (const device of outputDevices.slice(0, 2)) {
-        const deviceConfig = getTestConfig(device);
-        const stream = cpal.createStream(device, false, deviceConfig, () => {});
-        streams.push(stream);
+      for (const entry of outputDevices.slice(0, 2)) {
+        const stream = cpal.createStream(
+          entry.device.deviceId,
+          false,
+          entry.config,
+          () => {}
+        );
+        streams.push({ ...entry, stream });
       }
 
-      // Alternate between devices
       for (let i = 0; i < 10; i++) {
-        const stream = streams[i % streams.length];
-        cpal.writeToStream(stream, buffer);
+        const entry = streams[i % streams.length];
+        const buffer = generateSineWave(
+          440,
+          entry.config.sampleRate,
+          entry.config.channels,
+          0.1
+        );
+        cpal.writeToStream(entry.stream, buffer);
         await sleep(100);
       }
     } finally {
-      // Clean up all streams
-      streams.forEach((stream) => {
-        try {
-          cpal.closeStream(stream);
-        } catch (e) {
-          console.warn('Error closing stream:', e);
-        }
-      });
+      streams.forEach((entry) => cpal.closeStream(entry.stream));
     }
   }).timeout(10000);
 
-  it('should handle concurrent input/output streams', async () => {
+  it('should handle concurrent input/output streams', async function () {
     const inputDevice = getTestDevice(true);
     const outputDevice = getTestDevice(false);
     const inputConfig = getTestConfig(inputDevice, true);
     const outputConfig = getTestConfig(outputDevice, false);
-    let receivedData = false;
 
-    // Create input stream
-    const inputStream = cpal.createStream(
-      inputDevice,
-      true,
-      inputConfig,
-      (data) => {
-        receivedData = true;
-        // Echo the input data to the output stream
-        if (outputStream) {
-          cpal.writeToStream(outputStream, data);
-        }
-      }
-    );
+    if (!inputDevice || !outputDevice || !inputConfig || !outputConfig) {
+      this.skip();
+    }
 
-    // Create output stream
-    const outputStream = cpal.createStream(
-      outputDevice,
-      false,
-      outputConfig,
-      () => {}
-    );
+    let inputStream;
+    let outputStream;
 
     try {
-      // Let the audio loop run for a while
-      await sleep(2000);
+      outputStream = cpal.createStream(
+        outputDevice.deviceId,
+        false,
+        outputConfig,
+        () => {}
+      );
 
-      assert(receivedData, 'Should have received input data');
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error('Timed out waiting for input audio data')),
+          2000
+        );
+
+        try {
+          inputStream = cpal.createStream(
+            inputDevice.deviceId,
+            true,
+            inputConfig,
+            (data) => {
+              try {
+                assert(data instanceof Float32Array);
+                assert(data.length > 0);
+                clearTimeout(timeout);
+                resolve();
+              } catch (error) {
+                clearTimeout(timeout);
+                reject(error);
+              }
+            }
+          );
+        } catch (error) {
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
+
+      assert(cpal.isStreamActive(inputStream));
+      assert(cpal.isStreamActive(outputStream));
     } finally {
-      cpal.closeStream(inputStream);
-      cpal.closeStream(outputStream);
+      if (inputStream) {
+        cpal.closeStream(inputStream);
+      }
+      if (outputStream) {
+        cpal.closeStream(outputStream);
+      }
     }
   }).timeout(5000);
 
@@ -193,20 +224,27 @@ describe('Stress Tests', () => {
     const startMemory = getMemoryUsage();
 
     for (let i = 0; i < iterations; i++) {
-      const stream = cpal.createStream(device, false, config, () => {});
-      const buffer = generateSineWave(
-        440,
-        config.sampleRate,
-        config.channels,
-        0.05
+      const stream = cpal.createStream(
+        device.deviceId,
+        false,
+        config,
+        () => {}
       );
-      cpal.writeToStream(stream, buffer);
-      await sleep(10);
-      cpal.closeStream(stream);
+      try {
+        const buffer = generateSineWave(
+          440,
+          config.sampleRate,
+          config.channels,
+          0.05
+        );
+        cpal.writeToStream(stream, buffer);
+      } finally {
+        cpal.closeStream(stream);
+      }
     }
 
     const endMemory = getMemoryUsage();
-    console.log('Memory usage during high-frequency operations (MB):');
+    console.log('Memory usage during high-frequency operations:');
     console.log('Start:', startMemory);
     console.log('End:', endMemory);
 

@@ -12,38 +12,32 @@ describe('Stream Buffer Tests', () => {
   let outputStream;
   let config;
 
-  before(() => {
+  before(function () {
     outputDevice = getTestDevice(false);
-    config = getTestConfig(outputDevice, false);
-    config.format = 'f32';
-  });
+    if (!outputDevice) {
+      this.skip();
+    }
 
-  after(() => {
-    if (outputStream) {
-      try {
-        cpal.closeStream(outputStream);
-      } catch (e) {
-        console.error('Error closing stream:', e);
-      }
+    config = getTestConfig(outputDevice, false);
+    if (!config) {
+      this.skip();
     }
   });
 
   beforeEach(() => {
-    // Create a fresh stream for each test
-    if (outputStream) {
-      try {
-        cpal.closeStream(outputStream);
-      } catch (e) {
-        // Ignore errors
-      }
-    }
-
-    outputStream = cpal.createStream(outputDevice, false, config, () => {});
+    outputStream = cpal.createStream(
+      outputDevice.deviceId,
+      false,
+      config,
+      () => {}
+    );
   });
 
-  afterEach(async () => {
-    // Give some time for audio to play between tests
-    await sleep(100);
+  afterEach(() => {
+    if (outputStream) {
+      cpal.closeStream(outputStream);
+      outputStream = null;
+    }
   });
 
   it('should handle rapid sequential writes', async () => {
@@ -181,11 +175,10 @@ describe('Stream Buffer Tests', () => {
     await sleep(1500);
   });
 
-  it('should handle stereo panning', async () => {
+  it('should handle stereo panning', async function () {
     // Only run this test if we have stereo output
     if (config.channels < 2) {
-      console.log('Skipping stereo test - device does not support stereo');
-      return;
+      this.skip();
     }
 
     // Create a stereo buffer with sound panned to the left
