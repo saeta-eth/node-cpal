@@ -62,6 +62,7 @@ This example demonstrates how to:
 This example demonstrates how to:
 
 - Create a real-time audio visualizer in the terminal
+- Use the default input device's native sample rate
 - Process audio input to calculate volume levels
 - Display a dynamic visualization of audio input
 - Handle continuous audio streams
@@ -72,6 +73,7 @@ This example demonstrates how to:
 
 - Record audio from the default microphone for a specific duration
 - Store the recorded audio in memory
+- Resample and remix audio when input and output configurations differ
 - Play back the recorded audio through the speakers
 - Handle both input and output streams sequentially
 - Process audio data in chunks for efficient memory usage
@@ -79,5 +81,5 @@ This example demonstrates how to:
 ## Notes
 
 - Some examples may require audio hardware (speakers, microphones) to work properly
-- You may need to adjust parameters like sample rate or buffer size based on your system
+- You may need to adjust parameters like buffer size based on your system
 - Error handling is included to demonstrate proper resource management

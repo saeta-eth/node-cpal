@@ -7,9 +7,20 @@ use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 
-use crate::utils::types::{DeviceId, sample_format_to_js_string};
+use crate::utils::types::{sample_format_to_js_string, DeviceId};
 
 static DEVICES: Lazy<RwLock<HashMap<DeviceId, Device>>> = Lazy::new(|| RwLock::new(HashMap::new()));
+
+fn get_device_id(device: &Device) -> Option<DeviceId> {
+    device.id().ok().map(|id| id.to_string())
+}
+
+fn device_ids_match(device_id: Option<&str>, default_device_id: Option<&str>) -> bool {
+    matches!(
+        (device_id, default_device_id),
+        (Some(device_id), Some(default_device_id)) if device_id == default_device_id
+    )
+}
 
 pub fn get_hosts(mut cx: FunctionContext) -> JsResult<JsArray> {
     let array = cx.empty_array();
@@ -19,8 +30,8 @@ pub fn get_hosts(mut cx: FunctionContext) -> JsResult<JsArray> {
     
     for (i, host_id) in available_hosts.iter().enumerate() {
         let host_obj = cx.empty_object();
-        let host_id_str = cx.string(host_id.name());
-        let host_name_str = cx.string(host_id.name()); // Using name as both ID and name for now
+        let host_id_str = cx.string(host_id.to_string());
+        let host_name_str = cx.string(host_id.name());
         
         host_obj.set(&mut cx, "id", host_id_str)?;
         host_obj.set(&mut cx, "name", host_name_str)?;
@@ -42,7 +53,7 @@ pub fn get_devices(mut cx: FunctionContext) -> JsResult<JsArray> {
         
         let host_id = cpal::available_hosts()
             .into_iter()
-            .find(|id| id.name() == host_id_str);
+            .find(|id| id.to_string() == host_id_str || id.name() == host_id_str);
         
         let host_id = match host_id {
             Some(id) => id,
@@ -66,12 +77,23 @@ pub fn get_devices(mut cx: FunctionContext) -> JsResult<JsArray> {
         }
     };
 
+    let default_input_device_id = host
+        .default_input_device()
+        .and_then(|device| get_device_id(&device));
+    let default_output_device_id = host
+        .default_output_device()
+        .and_then(|device| get_device_id(&device));
+
     // Process each device
     for (i, device) in devices.iter().enumerate() {
-        let device_id = match device.name() {
-            Ok(name) => name,
+        let device_name = match device.description() {
+            Ok(description) => description.name().to_owned(),
             Err(_) => "Unknown Device".to_string(),
         };
+        let stable_device_id = get_device_id(device);
+        let device_id = stable_device_id
+            .clone()
+            .unwrap_or_else(|| device_name.clone());
         
         // Store the device in our cache
         DEVICES.write().insert(device_id.clone(), device.clone());
@@ -79,17 +101,18 @@ pub fn get_devices(mut cx: FunctionContext) -> JsResult<JsArray> {
         // Create a device object
         let obj = cx.empty_object();
         let id_str = cx.string(&device_id);
-        let name_str = cx.string(&device_id);
-        let host_id_str = cx.string(host.id().name());
+        let name_str = cx.string(&device_name);
+        let host_id_str = cx.string(host.id().to_string());
         
         // Check if this is a default device
-        let is_default_input = host.default_input_device()
-            .map(|d| d.name().map(|n| n == device_id).unwrap_or(false))
-            .unwrap_or(false);
-            
-        let is_default_output = host.default_output_device()
-            .map(|d| d.name().map(|n| n == device_id).unwrap_or(false))
-            .unwrap_or(false);
+        let is_default_input = device_ids_match(
+            stable_device_id.as_deref(),
+            default_input_device_id.as_deref(),
+        );
+        let is_default_output = device_ids_match(
+            stable_device_id.as_deref(),
+            default_output_device_id.as_deref(),
+        );
             
         let is_default_input_bool = cx.boolean(is_default_input);
         let is_default_output_bool = cx.boolean(is_default_output);
@@ -130,8 +153,8 @@ pub fn get_supported_input_configs(mut cx: FunctionContext) -> JsResult<JsArray>
         
         // Create all JS values first
         let channels = cx.number(config.channels() as f64);
-        let min_rate = cx.number(config.min_sample_rate().0 as f64);
-        let max_rate = cx.number(config.max_sample_rate().0 as f64);
+        let min_rate = cx.number(config.min_sample_rate() as f64);
+        let max_rate = cx.number(config.max_sample_rate() as f64);
         let format = cx.string(sample_format_to_js_string(config.sample_format()));
 
         // Now set all the values
@@ -168,8 +191,8 @@ pub fn get_supported_output_configs(mut cx: FunctionContext) -> JsResult<JsArray
         
         // Create all JS values first
         let channels = cx.number(config.channels() as f64);
-        let min_rate = cx.number(config.min_sample_rate().0 as f64);
-        let max_rate = cx.number(config.max_sample_rate().0 as f64);
+        let min_rate = cx.number(config.min_sample_rate() as f64);
+        let max_rate = cx.number(config.max_sample_rate() as f64);
         let format = cx.string(sample_format_to_js_string(config.sample_format()));
 
         // Now set all the values
@@ -201,14 +224,18 @@ pub fn get_default_device(mut cx: FunctionContext, is_input: bool) -> JsResult<J
         }),
     };
 
-    let device_id = device.name().unwrap_or_default();
+    let device_name = match device.description() {
+        Ok(description) => description.name().to_owned(),
+        Err(_) => "Unknown Device".to_string(),
+    };
+    let device_id = get_device_id(&device).unwrap_or_else(|| device_name.clone());
     DEVICES.write().insert(device_id.clone(), device.clone());
     
     // Create a device object
     let obj = cx.empty_object();
     let id_str = cx.string(&device_id);
-    let name_str = cx.string(&device_id);
-    let host_id_str = cx.string(host.id().name());
+    let name_str = cx.string(&device_name);
+    let host_id_str = cx.string(host.id().to_string());
     
     // Set default flags based on what we're looking for
     let is_default_input_bool = cx.boolean(is_input);
@@ -263,17 +290,10 @@ pub fn get_default_config(mut cx: FunctionContext, is_input: bool) -> JsResult<J
 
     // Create a config object
     let obj = cx.empty_object();
-    let sample_rate = cx.number(config.sample_rate().0 as f64);
+    let sample_rate = cx.number(config.sample_rate() as f64);
     let channels = cx.number(config.channels() as f64);
     
-    // Convert the sample format to a string
-    let format_str = match config.sample_format() {
-        cpal::SampleFormat::I16 => "i16",
-        cpal::SampleFormat::U16 => "u16",
-        cpal::SampleFormat::F32 => "f32",
-        _ => "unknown", // Handle any future formats
-    };
-    let format = cx.string(format_str);
+    let format = cx.string(sample_format_to_js_string(config.sample_format()));
     
     // Set the properties on the object
     obj.set(&mut cx, "sampleRate", sample_rate)?;
@@ -344,8 +364,8 @@ pub fn get_supported_sample_rates(mut cx: FunctionContext) -> JsResult<JsArray> 
     // Check input configs
     if let Ok(configs) = device.supported_input_configs() {
         for config in configs {
-            let min_rate = config.min_sample_rate().0;
-            let max_rate = config.max_sample_rate().0;
+            let min_rate = config.min_sample_rate();
+            let max_rate = config.max_sample_rate();
             if !rates.contains(&min_rate) {
                 rates.push(min_rate);
             }
@@ -358,8 +378,8 @@ pub fn get_supported_sample_rates(mut cx: FunctionContext) -> JsResult<JsArray> 
     // Check output configs
     if let Ok(configs) = device.supported_output_configs() {
         for config in configs {
-            let min_rate = config.min_sample_rate().0;
-            let max_rate = config.max_sample_rate().0;
+            let min_rate = config.min_sample_rate();
+            let max_rate = config.max_sample_rate();
             if !rates.contains(&min_rate) {
                 rates.push(min_rate);
             }
@@ -406,4 +426,23 @@ pub fn get_max_channels(mut cx: FunctionContext) -> JsResult<JsNumber> {
     }
 
     Ok(cx.number(max_channels as f64))
-} 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::device_ids_match;
+
+    #[test]
+    fn matches_default_devices_by_stable_id() {
+        assert!(device_ids_match(
+            Some("wasapi:endpoint"),
+            Some("wasapi:endpoint")
+        ));
+        assert!(!device_ids_match(
+            Some("wasapi:other"),
+            Some("wasapi:endpoint")
+        ));
+        assert!(!device_ids_match(None, Some("wasapi:endpoint")));
+        assert!(!device_ids_match(None, None));
+    }
+}

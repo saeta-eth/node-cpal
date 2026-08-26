@@ -14,8 +14,6 @@ try {
 }
 
 // Configuration
-const SAMPLE_RATE = 48000;
-const CHANNELS = 1; // Mono for visualization
 const DURATION_SECONDS = 30; // Run for 30 seconds
 const VISUALIZATION_WIDTH = 50; // Width of the visualization in characters
 
@@ -76,35 +74,31 @@ async function main() {
       return;
     }
 
-    // Get supported configurations and choose one
-    const supportedConfigs = cpal.getSupportedInputConfigs(
-      inputDevice.deviceId
-    );
+    const defaultConfig = cpal.getDefaultInputConfig(inputDevice.deviceId);
+    let selectedConfig = defaultConfig;
 
-    // Find a configuration that supports our desired sample rate and channel count
-    let selectedConfig = null;
-    for (const config of supportedConfigs) {
-      if (
-        config.channels >= CHANNELS &&
-        config.minSampleRate <= SAMPLE_RATE &&
-        config.maxSampleRate >= SAMPLE_RATE
-      ) {
-        selectedConfig = {
-          sampleRate: SAMPLE_RATE,
-          channels: CHANNELS,
-          sampleFormat: config.sampleFormat,
-        };
-        break;
+    if (defaultConfig.sampleFormat !== 'f32') {
+      const floatConfig = cpal
+        .getSupportedInputConfigs(inputDevice.deviceId)
+        .find((config) => config.format === 'f32');
+
+      if (!floatConfig) {
+        console.error('The input device does not support f32 audio');
+        return;
       }
-    }
 
-    if (!selectedConfig) {
-      console.error('No suitable audio configuration found');
-      return;
+      selectedConfig = {
+        sampleRate: Math.min(
+          Math.max(defaultConfig.sampleRate, floatConfig.minSampleRate),
+          floatConfig.maxSampleRate
+        ),
+        channels: floatConfig.channels,
+        sampleFormat: 'f32',
+      };
     }
 
     console.log(
-      `Using configuration: ${SAMPLE_RATE} Hz, ${CHANNELS} channels, ${selectedConfig.sampleFormat} format`
+      `Using configuration: ${selectedConfig.sampleRate} Hz, ${selectedConfig.channels} channels, ${selectedConfig.sampleFormat} format`
     );
     console.log(`\nAudio Visualizer - Running for ${DURATION_SECONDS} seconds`);
     console.log('Make some noise to see the visualization!');

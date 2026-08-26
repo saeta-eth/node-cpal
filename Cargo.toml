@@ -3,6 +3,7 @@ name = "node-cpal"
 version = "0.1.0"
 license = "ISC"
 edition = "2021"
+rust-version = "1.85"
 exclude = ["index.node"]
 
 [lib]
@@ -12,7 +13,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 neon = "1"
-cpal = "0.15.2"
+cpal = "0.18.2"
 uuid = { version = "1.6", features = ["v4"] }
 parking_lot = "0.12"
 lazy_static = "1.4"

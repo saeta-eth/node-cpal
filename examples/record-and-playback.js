@@ -16,6 +16,96 @@ try {
 // Configuration
 const RECORD_DURATION_SECONDS = 10;
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function concatenateChunks(chunks, totalSamples) {
+  const audioData = new Float32Array(totalSamples);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    audioData.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return audioData;
+}
+
+function convertChannels(audioData, inputChannels, outputChannels) {
+  if (inputChannels === outputChannels) {
+    return audioData;
+  }
+
+  const frameCount = Math.floor(audioData.length / inputChannels);
+  const convertedData = new Float32Array(frameCount * outputChannels);
+
+  for (let frame = 0; frame < frameCount; frame++) {
+    if (outputChannels === 1) {
+      let sample = 0;
+      for (let channel = 0; channel < inputChannels; channel++) {
+        sample += audioData[frame * inputChannels + channel];
+      }
+      convertedData[frame] = sample / inputChannels;
+      continue;
+    }
+
+    for (let channel = 0; channel < outputChannels; channel++) {
+      const inputChannel =
+        inputChannels === 1 ? 0 : Math.min(channel, inputChannels - 1);
+      convertedData[frame * outputChannels + channel] =
+        audioData[frame * inputChannels + inputChannel];
+    }
+  }
+
+  return convertedData;
+}
+
+function resampleAudio(audioData, inputRate, outputRate, channels) {
+  if (inputRate === outputRate || audioData.length === 0) {
+    return audioData;
+  }
+
+  const inputFrameCount = Math.floor(audioData.length / channels);
+  const outputFrameCount = Math.round(
+    (inputFrameCount * outputRate) / inputRate
+  );
+  const resampledData = new Float32Array(outputFrameCount * channels);
+
+  for (let outputFrame = 0; outputFrame < outputFrameCount; outputFrame++) {
+    const sourcePosition = (outputFrame * inputRate) / outputRate;
+    const firstFrame = Math.min(
+      Math.floor(sourcePosition),
+      inputFrameCount - 1
+    );
+    const secondFrame = Math.min(firstFrame + 1, inputFrameCount - 1);
+    const interpolation = sourcePosition - firstFrame;
+
+    for (let channel = 0; channel < channels; channel++) {
+      const firstSample = audioData[firstFrame * channels + channel];
+      const secondSample = audioData[secondFrame * channels + channel];
+      resampledData[outputFrame * channels + channel] =
+        firstSample + (secondSample - firstSample) * interpolation;
+    }
+  }
+
+  return resampledData;
+}
+
+async function writeWithBackpressure(stream, audioData) {
+  while (true) {
+    try {
+      cpal.writeToStream(stream, audioData);
+      return;
+    } catch (error) {
+      if (!/buffer full/i.test(error.message)) {
+        throw error;
+      }
+      await sleep(5);
+    }
+  }
+}
+
 // Main function
 async function main() {
   try {
@@ -95,115 +185,73 @@ async function main() {
     );
     console.log(`\nRecorded ${totalRecordedSamples} samples of audio data`);
 
-    // Now play back the recorded audio
-    console.log('\nPlaying back the recorded audio...');
-
-    // Create an output stream
-    const outputStream = cpal.createStream(
-      outputDevice.deviceId,
-      false, // false for output stream
-      outputConfig,
-      () => {} // Empty callback for output stream
+    const recordedData = concatenateChunks(
+      recordedChunks,
+      totalRecordedSamples
+    );
+    const channelConvertedData = convertChannels(
+      recordedData,
+      inputConfig.channels,
+      outputConfig.channels
+    );
+    const playbackData = resampleAudio(
+      channelConvertedData,
+      inputConfig.sampleRate,
+      outputConfig.sampleRate,
+      outputConfig.channels
     );
 
-    // Function to adapt mono to stereo if needed
-    function adaptChannels(monoData, outputChannels) {
-      if (outputChannels === 1 || monoData.length === 0) {
-        return monoData; // No adaptation needed
-      }
-
-      // Convert mono to stereo by duplicating each sample
-      const stereoData = new Float32Array(monoData.length * outputChannels);
-      for (let i = 0; i < monoData.length; i++) {
-        for (let ch = 0; ch < outputChannels; ch++) {
-          stereoData[i * outputChannels + ch] = monoData[i];
-        }
-      }
-      return stereoData;
+    if (
+      inputConfig.sampleRate !== outputConfig.sampleRate ||
+      inputConfig.channels !== outputConfig.channels
+    ) {
+      console.log(
+        `Converting ${inputConfig.sampleRate} Hz/${inputConfig.channels}ch to ${outputConfig.sampleRate} Hz/${outputConfig.channels}ch`
+      );
     }
 
-    // Process and play each chunk with a smaller buffer size and longer delay
-    const bufferSize = 512; // Smaller buffer size to prevent overflow
-    let currentChunkIndex = 0;
-    let offsetInCurrentChunk = 0;
-    let samplesWritten = 0;
+    console.log('\nPlaying back the recorded audio...');
 
-    // Calculate playback duration based on sample rate
+    const outputStream = cpal.createStream(
+      outputDevice.deviceId,
+      false,
+      outputConfig,
+      () => {}
+    );
+
     const playbackDurationMs =
-      (totalRecordedSamples / inputConfig.sampleRate) * 1000;
+      (playbackData.length /
+        outputConfig.channels /
+        outputConfig.sampleRate) *
+      1000;
     console.log(
       `Expected playback duration: ${(playbackDurationMs / 1000).toFixed(
         1
       )} seconds`
     );
 
-    // Use a try-catch block for each write operation
-    while (
-      samplesWritten < totalRecordedSamples &&
-      currentChunkIndex < recordedChunks.length
-    ) {
-      try {
-        // Get current chunk
-        let currentChunk = recordedChunks[currentChunkIndex];
+    const chunkFrameCount = 1024;
+    const chunkSampleCount = chunkFrameCount * outputConfig.channels;
+    const playbackStartedAt = Date.now();
 
-        if (!currentChunk) {
-          console.log(
-            `\nReached end of recorded data at chunk ${currentChunkIndex}`
-          );
-          break;
-        }
+    for (let offset = 0; offset < playbackData.length; offset += chunkSampleCount) {
+      const chunk = playbackData.subarray(
+        offset,
+        Math.min(offset + chunkSampleCount, playbackData.length)
+      );
+      await writeWithBackpressure(outputStream, chunk);
 
-        // Calculate how many samples we can take from the current chunk
-        const samplesAvailableInChunk =
-          currentChunk.length - offsetInCurrentChunk;
-        const samplesToWrite = Math.min(bufferSize, samplesAvailableInChunk);
-
-        if (samplesToWrite <= 0) {
-          // Move to the next chunk
-          currentChunkIndex++;
-          offsetInCurrentChunk = 0;
-          continue;
-        }
-
-        // Extract the samples from the current chunk
-        const samples = currentChunk.subarray(
-          offsetInCurrentChunk,
-          offsetInCurrentChunk + samplesToWrite
-        );
-
-        // Adapt channels if needed (e.g., mono to stereo)
-        const adaptedSamples = adaptChannels(samples, outputConfig.channels);
-
-        // Write to the output stream
-        cpal.writeToStream(outputStream, adaptedSamples);
-
-        // Update counters
-        offsetInCurrentChunk += samplesToWrite;
-        samplesWritten += samplesToWrite;
-
-        // Show progress
-        const progress = Math.min(
-          100,
-          Math.round((samplesWritten / totalRecordedSamples) * 100)
-        );
-        process.stdout.write(`\rPlayback: ${progress}%`);
-
-        // Longer delay to prevent buffer overflow
-        // Calculate delay based on sample rate to maintain real-time playback
-        const delayMs = (samplesToWrite / inputConfig.sampleRate) * 1000;
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      } catch (error) {
-        console.error(`\nError during playback: ${error.message}`);
-        console.log('Waiting before trying again...');
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
+      const progress = Math.min(
+        100,
+        Math.round(((offset + chunk.length) / playbackData.length) * 100)
+      );
+      process.stdout.write(`\rPlayback queued: ${progress}%`);
     }
 
-    // Wait a bit to ensure all audio is played
     console.log('\nFinishing playback...');
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const elapsedPlaybackMs = Date.now() - playbackStartedAt;
+    await sleep(Math.max(0, playbackDurationMs - elapsedPlaybackMs) + 500);
 
-    // Close the output stream
     cpal.closeStream(outputStream);
     console.log('Done!');
   } catch (error) {

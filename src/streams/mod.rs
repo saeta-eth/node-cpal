@@ -2,7 +2,7 @@ use cpal::{
     traits::{DeviceTrait, StreamTrait},
     Stream, StreamConfig,
 };
-use crossbeam_channel::{bounded, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 use once_cell::sync::Lazy;
@@ -20,15 +20,54 @@ struct StreamWrapper {
     output_tx: Option<Sender<Vec<f32>>>,
 }
 
-// The Stream type from cpal contains non-Send/Sync types internally,
-// but we know it's safe to use across threads in this context
-unsafe impl Send for StreamWrapper {}
-unsafe impl Sync for StreamWrapper {}
-
 static STREAMS: Lazy<RwLock<HashMap<StreamId, Arc<StreamWrapper>>>> = Lazy::new(|| RwLock::new(HashMap::new()));
 
 pub struct AudioCallback {
     channel_tx: Option<Sender<Vec<f32>>>,
+}
+
+#[derive(Default)]
+struct OutputBufferState {
+    pending_buffer: Vec<f32>,
+    pending_offset: usize,
+}
+
+impl OutputBufferState {
+    fn fill(&mut self, data: &mut [f32], receiver: &Receiver<Vec<f32>>) {
+        data.fill(0.0);
+        let mut data_offset = 0;
+
+        while data_offset < data.len() {
+            if self.pending_offset >= self.pending_buffer.len() {
+                match receiver.try_recv() {
+                    Ok(buffer) => {
+                        self.pending_buffer = buffer;
+                        self.pending_offset = 0;
+                    }
+                    Err(_) => {
+                        self.pending_buffer = Vec::new();
+                        self.pending_offset = 0;
+                        break;
+                    }
+                }
+            }
+
+            let sample_count = std::cmp::min(
+                data.len() - data_offset,
+                self.pending_buffer.len() - self.pending_offset,
+            );
+            data[data_offset..data_offset + sample_count].copy_from_slice(
+                &self.pending_buffer[self.pending_offset..self.pending_offset + sample_count],
+            );
+            data_offset += sample_count;
+            self.pending_offset += sample_count;
+        }
+
+        if self.pending_offset >= self.pending_buffer.len() {
+            self.pending_buffer = Vec::new();
+            self.pending_offset = 0;
+        }
+    }
 }
 
 pub fn create_stream(mut cx: FunctionContext) -> JsResult<JsString> {
@@ -47,7 +86,7 @@ pub fn create_stream(mut cx: FunctionContext) -> JsResult<JsString> {
 
     let stream_config = StreamConfig {
         channels,
-        sample_rate: cpal::SampleRate(sample_rate),
+        sample_rate,
         buffer_size: cpal::BufferSize::Default,
     };
 
@@ -66,7 +105,7 @@ pub fn create_stream(mut cx: FunctionContext) -> JsResult<JsString> {
             }
         };
 
-        let stream = match device.build_input_stream(&stream_config, input_callback, err_fn, None) {
+        let stream = match device.build_input_stream(stream_config, input_callback, err_fn, None) {
             Ok(stream) => stream,
             Err(e) => return cx.throw_error(format!("Failed to build input stream: {}", e)),
         };
@@ -102,30 +141,13 @@ pub fn create_stream(mut cx: FunctionContext) -> JsResult<JsString> {
     } else {
         // For output streams, create a channel to send audio data
         let (tx, rx) = bounded::<Vec<f32>>(32);
-        let rx = Arc::new(parking_lot::Mutex::new(rx));
+        let mut output_buffer = OutputBufferState::default();
         
         let output_callback = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            // Try to get data from the channel
-            if let Ok(buffer) = rx.lock().try_recv() {
-                // Copy as much data as possible from the buffer to the output
-                let len = std::cmp::min(data.len(), buffer.len());
-                data[..len].copy_from_slice(&buffer[..len]);
-                
-                // Fill the rest with silence if needed
-                if len < data.len() {
-                    for sample in &mut data[len..] {
-                        *sample = 0.0;
-                    }
-                }
-            } else {
-                // If no data is available, fill with silence
-                for sample in data.iter_mut() {
-                    *sample = 0.0;
-                }
-            }
+            output_buffer.fill(data, &rx);
         };
 
-        match device.build_output_stream(&stream_config, output_callback, err_fn, None) {
+        match device.build_output_stream(stream_config, output_callback, err_fn, None) {
             Ok(stream) => {
                 stream.play().unwrap();
                 let stream_wrapper = Arc::new(StreamWrapper { 
@@ -235,6 +257,53 @@ pub fn is_stream_active(mut cx: FunctionContext) -> JsResult<JsBoolean> {
     Ok(cx.boolean(is_active))
 }
 
-fn err_fn(err: cpal::StreamError) {
+fn err_fn(err: cpal::Error) {
     eprintln!("an error occurred on stream: {}", err);
-} 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OutputBufferState;
+    use crossbeam_channel::bounded;
+
+    #[test]
+    fn releases_exhausted_buffer_when_queue_is_idle() {
+        let (sender, receiver) = bounded(1);
+        sender.send(vec![1.0; 4096]).unwrap();
+
+        let mut output_buffer = OutputBufferState::default();
+        let mut output = vec![0.0; 4096];
+        output_buffer.fill(&mut output, &receiver);
+
+        assert_eq!(output, vec![1.0; 4096]);
+        assert_eq!(output_buffer.pending_buffer.capacity(), 0);
+        assert_eq!(output_buffer.pending_offset, 0);
+
+        let mut idle_output = [1.0; 32];
+        output_buffer.fill(&mut idle_output, &receiver);
+
+        assert_eq!(idle_output, [0.0; 32]);
+        assert_eq!(output_buffer.pending_buffer.capacity(), 0);
+        assert_eq!(output_buffer.pending_offset, 0);
+    }
+
+    #[test]
+    fn preserves_unconsumed_samples_between_callbacks() {
+        let (sender, receiver) = bounded(1);
+        sender.send(vec![1.0, 2.0, 3.0, 4.0]).unwrap();
+
+        let mut output_buffer = OutputBufferState::default();
+        let mut first_output = [0.0; 2];
+        output_buffer.fill(&mut first_output, &receiver);
+
+        assert_eq!(first_output, [1.0, 2.0]);
+        assert_eq!(output_buffer.pending_offset, 2);
+
+        let mut second_output = [0.0; 2];
+        output_buffer.fill(&mut second_output, &receiver);
+
+        assert_eq!(second_output, [3.0, 4.0]);
+        assert_eq!(output_buffer.pending_buffer.capacity(), 0);
+        assert_eq!(output_buffer.pending_offset, 0);
+    }
+}
