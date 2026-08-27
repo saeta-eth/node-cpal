@@ -8,23 +8,24 @@ Before you can publish, you need to:
 
 1. Have a GitHub repository for the project
 2. Have an npm account with publish access to the `node-cpal` package
-3. Add your npm token as a GitHub secret named `NPM_TOKEN`
+3. Configure npm trusted publishing for the release workflow
 
-## Adding the NPM_TOKEN Secret
+## Configuring npm Trusted Publishing
 
-1. Generate an npm access token:
+1. Log in to npmjs.com and open the `node-cpal` package settings.
+2. Under **Trusted publishing**, select **GitHub Actions**.
+3. Configure the publisher with:
 
-   - Log in to npm: `npm login`
-   - Create a new token: `npm token create --read-only=false`
-   - Copy the generated token
+   - Organization or user: `saeta-eth`
+   - Repository: `node-cpal`
+   - Workflow filename: `build-and-publish.yml`
+   - Environment: leave empty
+   - Allowed action: `npm publish`
 
-2. Add the token to GitHub repository secrets:
-   - Go to your GitHub repository
-   - Navigate to Settings > Secrets and variables > Actions
-   - Click "New repository secret"
-   - Name: `NPM_TOKEN`
-   - Value: Paste your npm token
-   - Click "Add secret"
+4. Save the trusted publisher configuration using interactive 2FA.
+
+The publish job authenticates with a short-lived GitHub Actions OIDC token. It
+does not use an `NPM_TOKEN` repository secret.
 
 ## Preparing a New Version
 
@@ -105,4 +106,6 @@ If the workflow fails:
    - Compilation errors on specific platforms
    - npm authentication issues
 
-For npm authentication issues, verify that your `NPM_TOKEN` secret is correctly set and has publish permissions.
+For npm authentication issues, verify that the trusted publisher values match
+the repository and workflow filename exactly and that the publish job has
+`id-token: write` permission.
