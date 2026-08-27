@@ -26,30 +26,41 @@ Before you can publish, you need to:
    - Value: Paste your npm token
    - Click "Add secret"
 
+## Preparing a New Version
+
+1. Update the version in `package.json` and `package-lock.json`.
+2. Keep the version synchronized in `Cargo.toml`, `Cargo.lock`, and
+   `examples/package.json`.
+3. Commit the release preparation and ensure CI passes.
+4. Run the **Build, Package, and Publish** workflow manually with the intended
+   version.
+5. Download and inspect the `npm-package` artifact. Manual runs never publish
+   to npm.
+
 ## Publishing a New Version
 
-There are two ways to publish a new version:
-
-### Method 1: Using Git Tags (Recommended)
-
-1. Update the version in `package.json`
-2. Commit the changes: `git commit -am "Bump version to x.y.z"`
-3. Create a git tag: `git tag vx.y.z` (e.g., `git tag v0.1.1`)
-4. Push the tag: `git push origin vx.y.z`
+1. Create a git tag from the prepared commit: `git tag vx.y.z` (for example,
+   `git tag v0.2.0`).
+2. Push the tag: `git push origin vx.y.z`.
 
 This will automatically trigger the GitHub Actions workflow, which will:
 
 - Build the native binaries for all platforms and architectures
-- Package them together
-- Publish to npm
+- Verify that every binary matches its declared platform and architecture
+- Package and upload the exact npm tarball
+- Publish that tarball to npm
 
-### Method 2: Using Manual Workflow Dispatch
+## Running a Dry Run
 
 1. Go to your GitHub repository
-2. Navigate to Actions > "Build and Publish" workflow
+2. Navigate to Actions > "Build, Package, and Publish" workflow
 3. Click "Run workflow"
-4. Enter the version number (e.g., `0.1.1`)
+4. Enter the intended version or keep `0.0.0-dry-run`
 5. Click "Run workflow"
+
+The workflow builds and verifies every native binary, assembles the npm
+tarball, and uploads it as the `npm-package` artifact. The publish job is
+skipped for manual runs.
 
 ## Workflow Details
 
@@ -67,7 +78,8 @@ The GitHub Actions workflow:
    - TypeScript definitions (`index.d.ts`)
    - Platform-specific binaries in the `bin` directory
 
-3. Publishes the package to npm
+3. Uploads the npm tarball for inspection
+4. Publishes only when the workflow was triggered by a `v*` tag
 
 ## How It Works
 

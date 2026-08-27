@@ -13,7 +13,7 @@
     "record-and-playback": "node record-and-playback.js"
   },
   "dependencies": {
-    "node-cpal": "^0.1.0"
+    "node-cpal": "^0.2.0"
   },
   "engines": {
     "node": ">=22.0.0"
