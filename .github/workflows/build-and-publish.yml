@@ -237,6 +237,9 @@ jobs:
           npm pack ./dist --ignore-scripts --pack-destination package
           sha256sum package/*.tgz
 
+      - name: Verify npm publish command
+        run: npm publish ./package/*.tgz --dry-run --ignore-scripts
+
       - name: Upload npm package
         uses: actions/upload-artifact@v4
         with:
@@ -264,6 +267,6 @@ jobs:
           path: package
 
       - name: Publish to npm
-        run: npm publish package/*.tgz --ignore-scripts
+        run: npm publish ./package/*.tgz --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
