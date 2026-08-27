@@ -19,19 +19,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             platform: darwin
             arch: x64
-          - os: macos-latest
+          - os: macos-15
             target: aarch64-apple-darwin
             platform: darwin
             arch: arm64
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             platform: linux
             arch: x64
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             platform: linux
             arch: arm64
@@ -80,9 +80,12 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build
+        run: npm run build -- --target ${{ matrix.target }}
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+      - name: Verify binary architecture
+        run: node scripts/verify-native-binary.js index.node ${{ matrix.platform }}-${{ matrix.arch }}
 
       - name: Prepare package
         run: |
@@ -183,6 +186,12 @@ jobs:
           # Verify all binaries were copied
           echo "Verifying binaries in dist/bin:"
           find dist/bin -type f | sort
+
+          node scripts/verify-native-binary.js dist/bin/darwin-x64/index.node darwin-x64
+          node scripts/verify-native-binary.js dist/bin/darwin-arm64/index.node darwin-arm64
+          node scripts/verify-native-binary.js dist/bin/linux-x64/index.node linux-x64
+          node scripts/verify-native-binary.js dist/bin/linux-arm64/index.node linux-arm64
+          node scripts/verify-native-binary.js dist/bin/win32-x64/index.node win32-x64
 
       - name: Modify package.json for platform-specific binaries
         run: |
