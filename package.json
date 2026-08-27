@@ -16,7 +16,7 @@
     "cargo-build": "cargo build --message-format=json-render-diagnostics > cargo.log",
     "cross-build": "cross build --message-format=json-render-diagnostics > cross.log",
     "postcargo-build": "neon dist < cargo.log",
-    "postcross-build": "neon dist -m /target < cross.log",
+    "postcross-build": "neon dist -m /target --manifest-path Cargo.toml < cross.log",
     "debug": "npm run cargo-build --",
     "build": "npm run cargo-build -- --release",
     "cross": "npm run cross-build -- --release",
@@ -32,10 +32,10 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@neon-rs/cli": "0.1.82",
-    "@types/node": "^20.0.0",
-    "mocha": "^10.8.2",
-    "typescript": "4.9.5"
+    "@neon-rs/cli": "0.2.6",
+    "@types/node": "^22.20.1",
+    "mocha": "^11.8.0",
+    "typescript": "7.0.2"
   },
   "engines": {
     "node": ">=22.0.0"
