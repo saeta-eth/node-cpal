@@ -19,6 +19,7 @@ Each example is a standalone JavaScript file that can be run directly with Node.
 ```bash
 node beep.js
 node cpal-direct.js
+node optional-backend.js jack
 node list-devices.js
 node audio-visualizer.js
 node record-and-playback.js
@@ -33,6 +34,7 @@ npm install
 # Then run any example
 npm run beep
 npm run cpal-direct
+npm run optional-backend -- jack
 npm run list-devices
 npm run audio-visualizer
 npm run record-and-playback

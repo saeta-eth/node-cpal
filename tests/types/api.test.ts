@@ -1,4 +1,8 @@
 import * as cpal from '../..';
+import * as jack from 'node-cpal/backend-jack';
+import * as pipewire from 'node-cpal/backend-pipewire';
+import * as pulseaudio from 'node-cpal/backend-pulseaudio';
+import * as asio from 'node-cpal/backend-asio';
 import type {
   AudioDevice,
   AudioDeviceConfig,
@@ -13,6 +17,14 @@ import type {
 } from '../..';
 
 const convenience = cpal.convenience;
+const jackHostConstructor: cpal.JackHostConstructor = jack.JackHost;
+const pipeWireHostConstructor: cpal.PipeWireHostConstructor = pipewire.PipeWireHost;
+const pulseHosts: readonly cpal.HostId[] = pulseaudio.ALL_HOSTS;
+const asioHosts: readonly cpal.HostId[] = asio.ALL_HOSTS;
+void jackHostConstructor;
+void pipeWireHostConstructor;
+void pulseHosts;
+void asioHosts;
 // @ts-expect-error queued discovery is intentionally not part of canonical CPAL.
 cpal.getDevices();
 const hosts: AudioHost[] = convenience.getHosts();

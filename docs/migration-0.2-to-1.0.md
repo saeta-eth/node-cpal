@@ -534,19 +534,22 @@ device.buildOutputStream(
 
 ## Optional backends
 
-The main package contains the platform backend: CoreAudio on macOS, ALSA on
-Linux, and WASAPI on Windows. Optional CPAL backends are separately published
-packages with the same JavaScript API:
+The root entry point contains CPAL's default platform backend: CoreAudio on
+macOS, ALSA on Linux, and WASAPI on Windows. Version 1.0.0 also provides
+feature-specific builds as subpaths of the same `node-cpal` package:
 
-```bash
-npm install @node-cpal/backend-jack
-npm install @node-cpal/backend-pipewire
-npm install @node-cpal/backend-pulseaudio
-npm install @node-cpal/backend-asio
+```js
+const jack = require('node-cpal/backend-jack');
+const pipewire = require('node-cpal/backend-pipewire');
+const pulseaudio = require('node-cpal/backend-pulseaudio');
+const asio = require('node-cpal/backend-asio');
 ```
 
-Import the selected package instead of `node-cpal`. Availability remains
-platform- and installation-dependent.
+Do not install an additional package. The subpath chooses a native addon built
+with that CPAL feature; select the resulting host through `hostFromId()` or a
+concrete host constructor. The platform's default host is still present, so
+`defaultHost()` retains CPAL's ordinary behavior. Backend client libraries,
+services, drivers, and platform availability are still required.
 
 ## Migration checklist
 

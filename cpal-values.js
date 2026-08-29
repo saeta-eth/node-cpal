@@ -474,7 +474,8 @@ class HostId {
 }
 
 function registerHostIds(descriptors) {
-  hostIdsByValue.clear();
+  // Backend subpath facades can coexist, so retain IDs registered by
+  // earlier builds.
   return descriptors.map((descriptor) => {
     const value = String(descriptor.id).toLowerCase();
     const variant = HOST_ID_VARIANTS[value];
