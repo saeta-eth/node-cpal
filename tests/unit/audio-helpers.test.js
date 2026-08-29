@@ -44,19 +44,19 @@ describe('Audio Test Helpers', () => {
         channels: 1,
         minSampleRate: 22050,
         maxSampleRate: 24000,
-        format: 'i16',
+        sampleFormat: 'i16',
       },
       {
         channels: 1,
         minSampleRate: 24000,
         maxSampleRate: 48000,
-        format: 'f32',
+        sampleFormat: 'f32',
       },
       {
         channels: 2,
         minSampleRate: 44100,
         maxSampleRate: 96000,
-        format: 'f32',
+        sampleFormat: 'f32',
       },
     ];
 
@@ -67,7 +67,12 @@ describe('Audio Test Helpers', () => {
           sampleRate: 48000,
           sampleFormat: 'i16',
         }),
-        { channels: 2, sampleRate: 48000, format: 'f32' }
+        {
+          channels: 2,
+          sampleRate: 48000,
+          sampleFormat: 'f32',
+          bufferSize: { type: 'default' },
+        }
       );
     });
 
@@ -78,7 +83,12 @@ describe('Audio Test Helpers', () => {
           sampleRate: 192000,
           sampleFormat: 'f64',
         }),
-        { channels: 1, sampleRate: 24000, format: 'f32' }
+        {
+          channels: 1,
+          sampleRate: 24000,
+          sampleFormat: 'f32',
+          bufferSize: { type: 'default' },
+        }
       );
     });
 
@@ -113,48 +123,73 @@ describe('Audio Test Helpers', () => {
   });
 
   describe('getF32StreamConfig example helper', () => {
-    it('selects a valid output configuration through the public API', () => {
-      const cpal = {
-        getSupportedOutputConfigs: () => [
-          {
-            channels: 2,
-            minSampleRate: 44100,
-            maxSampleRate: 96000,
-            format: 'f32',
-          },
+    const F32 = Object.freeze({ value: 'f32' });
+    const I16 = Object.freeze({ value: 'i16' });
+    const cpal = { SampleFormat: { F32 } };
+
+    function config(channels, sampleRate, sampleFormat) {
+      return {
+        channels: () => channels,
+        sampleRate: () => sampleRate,
+        sampleFormat: () => sampleFormat,
+      };
+    }
+
+    function range(channels, minSampleRate, maxSampleRate, sampleFormat) {
+      return {
+        channels: () => channels,
+        sampleFormat: () => sampleFormat,
+        containsRate: (rate) =>
+          rate >= minSampleRate && rate <= maxSampleRate,
+        tryWithSampleRate(rate) {
+          return this.containsRate(rate)
+            ? config(channels, rate, sampleFormat)
+            : null;
+        },
+        tryWithStandardSampleRate() {
+          return this.tryWithSampleRate(48000);
+        },
+        withMaxSampleRate: () =>
+          config(channels, maxSampleRate, sampleFormat),
+      };
+    }
+
+    it('selects a valid output configuration through canonical Device methods', () => {
+      const device = {
+        supportedOutputConfigs: () => [
+          range(1, 24000, 48000, F32),
+          range(2, 44100, 96000, F32),
         ],
-        getDefaultOutputConfig: () => ({
-          channels: 2,
-          sampleRate: 48000,
-          sampleFormat: 'i16',
-        }),
+        defaultOutputConfig: () => config(2, 48000, I16),
       };
 
-      assert.deepStrictEqual(
-        getF32StreamConfig(cpal, 'output-device', false),
-        { channels: 2, sampleRate: 48000 }
+      const selected = getF32StreamConfig(cpal, device, false);
+      assert.strictEqual(selected.channels(), 2);
+      assert.strictEqual(selected.sampleRate(), 48000);
+      assert.strictEqual(selected.sampleFormat(), F32);
+    });
+
+    it('returns an f32 default configuration unchanged', () => {
+      const defaultConfig = config(2, 48000, F32);
+      const device = {
+        supportedOutputConfigs: () => [],
+        defaultOutputConfig: () => defaultConfig,
+      };
+
+      assert.strictEqual(
+        getF32StreamConfig(cpal, device, false),
+        defaultConfig
       );
     });
 
     it('rejects devices without f32 support', () => {
-      const cpal = {
-        getSupportedInputConfigs: () => [
-          {
-            channels: 1,
-            minSampleRate: 24000,
-            maxSampleRate: 24000,
-            format: 'i16',
-          },
-        ],
-        getDefaultInputConfig: () => ({
-          channels: 1,
-          sampleRate: 24000,
-          sampleFormat: 'i16',
-        }),
+      const device = {
+        supportedInputConfigs: () => [range(1, 24000, 24000, I16)],
+        defaultInputConfig: () => config(1, 24000, I16),
       };
 
       assert.throws(
-        () => getF32StreamConfig(cpal, 'input-device', true),
+        () => getF32StreamConfig(cpal, device, true),
         /does not support f32/
       );
     });

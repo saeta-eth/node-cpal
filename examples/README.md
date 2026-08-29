@@ -18,6 +18,7 @@ Each example is a standalone JavaScript file that can be run directly with Node.
 
 ```bash
 node beep.js
+node cpal-direct.js
 node list-devices.js
 node audio-visualizer.js
 node record-and-playback.js
@@ -31,6 +32,7 @@ npm install
 
 # Then run any example
 npm run beep
+npm run cpal-direct
 npm run list-devices
 npm run audio-visualizer
 npm run record-and-playback
@@ -38,36 +40,48 @@ npm run record-and-playback
 
 ## Examples Overview
 
-### 1. Beep (`beep.js`)
+All examples use the one-to-one CPAL API directly. Hosts, devices, and streams
+own native resources, so each example closes all three explicitly.
+
+### 1. Canonical CPAL stream (`cpal-direct.js`)
+
+This example demonstrates the one-to-one CPAL API:
+
+- Open the default `Host` and output `Device`
+- Read the device's native `SupportedStreamConfig`
+- Build a paused typed or raw `Stream` synchronously
+- Play, close, and release the native handles explicitly
+
+### 2. Beep (`beep.js`)
 
 This example demonstrates how to:
 
 - Create a simple beep sound (440 Hz sine wave)
-- Generate audio data in small chunks
-- Write audio data to an output stream
+- Fill CPAL's typed output buffer directly in the data callback
+- Select a supported `f32` configuration from the output `Device`
 - Play a tone for a specific duration
 - Properly clean up audio resources
 
-### 2. List Audio Devices (`list-devices.js`)
+### 3. List Audio Devices (`list-devices.js`)
 
 This example demonstrates how to:
 
 - List all available audio hosts
 - Enumerate all audio devices
 - Get default input and output devices
-- Display device capabilities
+- Display canonical descriptions, default configurations, and config ranges
 
-### 3. Audio Visualizer (`audio-visualizer.js`)
+### 4. Audio Visualizer (`audio-visualizer.js`)
 
 This example demonstrates how to:
 
 - Create a real-time audio visualizer in the terminal
 - Use the default input device's native sample rate
-- Process audio input to calculate volume levels
+- Process CPAL's typed input buffers to calculate volume levels
 - Display a dynamic visualization of audio input
 - Handle continuous audio streams
 
-### 4. Record and Playback (`record-and-playback.js`)
+### 5. Record and Playback (`record-and-playback.js`)
 
 This example demonstrates how to:
 
@@ -76,10 +90,11 @@ This example demonstrates how to:
 - Resample and remix audio when input and output configurations differ
 - Play back the recorded audio through the speakers
 - Handle both input and output streams sequentially
-- Process audio data in chunks for efficient memory usage
+- Supply recorded samples directly from CPAL's output callback
 
 ## Notes
 
 - Some examples may require audio hardware (speakers, microphones) to work properly
-- You may need to adjust parameters like buffer size based on your system
+- Input examples may require microphone permission from the operating system
+- CPAL stream callbacks are real-time audio callbacks; production callbacks should avoid blocking work and allocations
 - Error handling is included to demonstrate proper resource management

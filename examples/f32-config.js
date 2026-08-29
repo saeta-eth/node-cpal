@@ -1,34 +1,39 @@
-function getF32StreamConfig(cpal, deviceId, isInput) {
-  const supportedConfigs = isInput
-    ? cpal.getSupportedInputConfigs(deviceId)
-    : cpal.getSupportedOutputConfigs(deviceId);
-  const defaultConfig = isInput
-    ? cpal.getDefaultInputConfig(deviceId)
-    : cpal.getDefaultOutputConfig(deviceId);
-  const floatConfigs = supportedConfigs.filter(
-    (config) => config.format === 'f32'
-  );
+/** Select an f32 configuration from a canonical CPAL Device. */
 
+function getF32StreamConfig(cpal, device, isInput) {
+  const supportedConfigs = [
+    ...(isInput
+      ? device.supportedInputConfigs()
+      : device.supportedOutputConfigs()),
+  ];
+  const defaultConfig = isInput
+    ? device.defaultInputConfig()
+    : device.defaultOutputConfig();
+
+  if (defaultConfig.sampleFormat() === cpal.SampleFormat.F32) {
+    return defaultConfig;
+  }
+
+  const floatConfigs = supportedConfigs.filter(
+    (config) => config.sampleFormat() === cpal.SampleFormat.F32
+  );
   if (floatConfigs.length === 0) {
     throw new Error('The selected device does not support f32 audio');
   }
 
+  const defaultSampleRate = defaultConfig.sampleRate();
   const selectedConfig =
     floatConfigs.find(
       (config) =>
-        config.channels === defaultConfig.channels &&
-        defaultConfig.sampleRate >= config.minSampleRate &&
-        defaultConfig.sampleRate <= config.maxSampleRate
+        config.channels() === defaultConfig.channels() &&
+        config.containsRate(defaultSampleRate)
     ) || floatConfigs[0];
 
-  return {
-    sampleRate:
-      defaultConfig.sampleRate >= selectedConfig.minSampleRate &&
-      defaultConfig.sampleRate <= selectedConfig.maxSampleRate
-        ? defaultConfig.sampleRate
-        : selectedConfig.minSampleRate,
-    channels: selectedConfig.channels,
-  };
+  return (
+    selectedConfig.tryWithSampleRate(defaultSampleRate) ||
+    selectedConfig.tryWithStandardSampleRate() ||
+    selectedConfig.withMaxSampleRate()
+  );
 }
 
 module.exports = { getF32StreamConfig };

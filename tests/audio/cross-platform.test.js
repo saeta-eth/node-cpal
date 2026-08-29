@@ -1,165 +1,78 @@
 const assert = require('assert');
-const cpal = require('../..');
 const os = require('os');
-const {
-  assertStreamCreationThrows,
-  getTestConfig,
-  getTestDevice,
-} = require('../helpers/hardware');
+const cpal = require('../..').convenience;
+const { getTestConfig, getTestDevice } = require('../helpers/hardware');
 
-const SAMPLE_FORMATS = new Set([
-  'i8',
-  'i16',
-  'i24',
-  'i32',
-  'i64',
-  'u8',
-  'u16',
-  'u24',
-  'u32',
-  'u64',
-  'f32',
-  'f64',
-  'dsdu8',
-  'dsdu16',
-  'dsdu32',
-]);
-
-describe('Cross-Platform Tests', () => {
-  let device;
-  let config;
-
-  before(() => {
-    device = getTestDevice(false);
-    config = getTestConfig(device, false);
+describe('Convenience desktop backend coverage', () => {
+  it('includes the platform default backend', () => {
+    const hostIds = cpal.getHosts().map((host) => host.id);
+    const expected = {
+      darwin: 'coreaudio',
+      linux: 'alsa',
+      win32: 'wasapi',
+    }[os.platform()];
+    assert(hostIds.includes(expected));
   });
 
-  it('should identify correct host API for platform', () => {
-    const hostNames = cpal.getHosts().map((host) => host.name);
-
-    switch (os.platform()) {
-      case 'darwin':
-        assert(hostNames.includes('CoreAudio'));
-        break;
-      case 'win32':
-        assert(hostNames.some((name) => ['WASAPI', 'ASIO'].includes(name)));
-        break;
-      case 'linux':
-        assert(hostNames.some((name) => ['ALSA', 'JACK'].includes(name)));
-        break;
-    }
-  });
-
-  it('should expose valid platform sample formats', function () {
-    if (!device) {
-      this.skip();
-    }
-
-    const supportedFormats = cpal.getSupportedFormats(device.deviceId);
-    const outputConfigs = cpal.getSupportedOutputConfigs(device.deviceId);
-
-    assert(supportedFormats.length > 0, 'Should expose at least one format');
-    assert.strictEqual(
-      new Set(supportedFormats).size,
-      supportedFormats.length,
-      'Supported formats should be unique'
-    );
-    supportedFormats.forEach((format) => {
-      assert(SAMPLE_FORMATS.has(format), `Unexpected CPAL format: ${format}`);
-    });
-    outputConfigs.forEach((outputConfig) => {
-      assert(
-        supportedFormats.includes(outputConfig.format),
-        `Missing output format: ${outputConfig.format}`
-      );
-    });
-  });
-
-  it('should expose sample-rate boundaries from device capabilities', function () {
-    if (!device) {
-      this.skip();
-    }
-
-    const supportedRates = cpal.getSupportedSampleRates(device.deviceId);
-    const outputConfigs = cpal.getSupportedOutputConfigs(device.deviceId);
-    const sortedRates = [...supportedRates].sort((a, b) => a - b);
-
-    assert(supportedRates.length > 0, 'Should expose supported sample rates');
-    assert.deepStrictEqual(supportedRates, sortedRates);
-    assert.strictEqual(new Set(supportedRates).size, supportedRates.length);
-    supportedRates.forEach((rate) => {
-      assert(Number.isInteger(rate));
-      assert(rate > 0);
-    });
-    outputConfigs.forEach((outputConfig) => {
-      assert(supportedRates.includes(outputConfig.minSampleRate));
-      assert(supportedRates.includes(outputConfig.maxSampleRate));
-    });
-  });
-
-  it('should report the maximum available channel count', function () {
-    if (!device) {
-      this.skip();
-    }
+  it('keeps format and sample-rate helpers consistent with config ranges', function () {
+    const device = getTestDevice(false);
+    if (!device) this.skip();
 
     const configs = cpal.getSupportedOutputConfigs(device.deviceId);
-    try {
-      configs.push(...cpal.getSupportedInputConfigs(device.deviceId));
-    } catch (error) {
-      if (!/does not support input/i.test(error.message)) {
-        throw error;
-      }
-    }
+    const formats = cpal.getSupportedFormats(device.deviceId);
+    const rates = cpal.getSupportedSampleRates(device.deviceId);
+    const maxChannels = cpal.getMaxChannels(device.deviceId);
 
-    const expectedMaxChannels = Math.max(
-      ...configs.map((supportedConfig) => supportedConfig.channels)
-    );
-    assert.strictEqual(cpal.getMaxChannels(device.deviceId), expectedMaxChannels);
-  });
-
-  it('should handle platform-specific error cases', function () {
-    if (!device || !config) {
-      this.skip();
-    }
-
-    assertStreamCreationThrows(
-      () => cpal.createStream('invalid-device', false, config, () => {}),
-      /Device not found/
-    );
-
-    const invalidConfig = {
-      channels: 999,
-      sampleRate: 999999999,
-      format: 'invalid-format',
-    };
-    assertStreamCreationThrows(
-      () =>
-        cpal.createStream(device.deviceId, false, invalidConfig, () => {}),
-      /Failed to build output stream:.*not supported/i
-    );
-
-    assertStreamCreationThrows(
-      () =>
-        cpal.createStream(device.deviceId, true, config, 'not-a-function'),
-      /failed to downcast any to function/i
-    );
-  });
-
-  it('should expose device identifiers for the selected host', function () {
-    const hosts = cpal.getHosts();
-    const host = hosts[0];
-    const devices = cpal.getDevices(host.id);
-
-    if (devices.length === 0) {
-      this.skip();
-    }
-
-    devices.forEach((hostDevice) => {
-      assert.strictEqual(typeof hostDevice.name, 'string');
-      assert(hostDevice.name.length > 0);
-      assert.strictEqual(typeof hostDevice.deviceId, 'string');
-      assert(hostDevice.deviceId.length > 0);
-      assert.strictEqual(hostDevice.hostId, host.id);
+    configs.forEach((config) => {
+      assert(formats.includes(config.sampleFormat));
+      assert(rates.includes(config.minSampleRate));
+      assert(rates.includes(config.maxSampleRate));
+      assert(maxChannels >= config.channels);
     });
+    assert.deepStrictEqual(rates, [...new Set(rates)].sort((a, b) => a - b));
+  });
+
+  it('returns structured errors for unavailable devices and bad configs', async function () {
+    const device = getTestDevice(false);
+    const config = getTestConfig(device, false);
+    if (!device || !config) this.skip();
+
+    await assert.rejects(
+      cpal.createOutputStream({
+        deviceId: `${device.hostId}:definitely-missing`,
+        config,
+        onError() {},
+      }),
+      (error) => error instanceof cpal.CpalError && typeof error.code === 'string'
+    );
+
+    await assert.rejects(
+      cpal.createOutputStream({
+        deviceId: device.deviceId,
+        config: {
+          channels: 65_535,
+          sampleRate: 4_000_000_000,
+          sampleFormat: 'f32',
+        },
+        onError() {},
+      }),
+      (error) => error instanceof cpal.CpalError && error.code === 'UNSUPPORTED_CONFIG'
+    );
+  });
+
+  it('does not silently accept host options on backends without options', function () {
+    const defaultHost = {
+      darwin: 'coreaudio',
+      linux: 'alsa',
+      win32: 'wasapi',
+    }[os.platform()];
+
+    assert.throws(
+      () => cpal.getDevices({
+        hostId: defaultHost,
+        hostOptions: { connectAutomatically: false },
+      }),
+      (error) => error instanceof cpal.CpalError && error.code === 'UNSUPPORTED_OPERATION'
+    );
   });
 });

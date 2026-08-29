@@ -1,4 +1,4 @@
-const cpal = require('../..');
+const cpal = require('../..').convenience;
 const assert = require('assert');
 const {
   sleep,
@@ -8,16 +8,23 @@ const {
   getMemoryUsage,
 } = require('./audio');
 
-function createTestStream(device, isInput, config) {
-  return cpal.createStream(
-    getDeviceId(device),
-    isInput,
-    {
+async function createTestStream(device, isInput, config, callbacks = {}) {
+  const options = {
+    deviceId: getDeviceId(device),
+    config: {
       channels: Number(config.channels),
       sampleRate: Number(config.sampleRate),
+      sampleFormat: config.sampleFormat,
+      bufferSize: config.bufferSize,
     },
-    () => {}
-  );
+    autoStart: true,
+    onError: callbacks.onError || (() => {}),
+  };
+  if (isInput) {
+    options.onData = callbacks.onData || (() => {});
+    return cpal.createInputStream(options);
+  }
+  return cpal.createOutputStream(options);
 }
 
 function getTestConfig(device, isInput = false) {
@@ -51,7 +58,11 @@ function getTestDevice(isInput = false) {
       ? cpal.getDefaultInputDevice()
       : cpal.getDefaultOutputDevice();
   } catch (error) {
-    if (/No default (input|output) device found/i.test(error.message)) {
+    if (
+      ['DEVICE_NOT_AVAILABLE', 'HOST_UNAVAILABLE'].includes(error.code) ||
+      /No default (input|output) device found/i.test(error.message) ||
+      (error.code === 'BACKEND_ERROR' && /get device name/i.test(error.message))
+    ) {
       return null;
     }
     throw error;
@@ -59,24 +70,24 @@ function getTestDevice(isInput = false) {
 }
 
 async function withTestStream(device, isInput, config, callback) {
-  const stream = createTestStream(device, isInput, config);
+  const stream = await createTestStream(device, isInput, config);
   try {
     await callback(stream);
   } finally {
-    cpal.closeStream(stream);
+    await stream.close();
   }
 }
 
-function assertStreamCreationThrows(create, expected) {
+async function assertStreamCreationThrows(create, expected) {
   let unexpectedStream;
 
   try {
-    assert.throws(() => {
-      unexpectedStream = create();
+    await assert.rejects(async () => {
+      unexpectedStream = await create();
     }, expected);
   } finally {
     if (unexpectedStream) {
-      cpal.closeStream(unexpectedStream);
+      await unexpectedStream.close();
     }
   }
 }

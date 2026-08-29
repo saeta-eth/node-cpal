@@ -1,24 +1,33 @@
-/**
- * record-and-playback.js
- *
- * This example demonstrates how to record audio from the default input device,
- * store it in memory, and then play it back through the speakers.
- */
+/** Record microphone audio, convert it, and play it through canonical CPAL streams. */
 
-// Try to load the module from the parent directory (development) or from node_modules (installed)
 let cpal;
 try {
   cpal = require('../');
-} catch (e) {
+} catch (_) {
   cpal = require('node-cpal');
 }
 const { getF32StreamConfig } = require('./f32-config');
 
-// Configuration
 const RECORD_DURATION_SECONDS = 10;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function cancellableDelay(ms) {
+  let timer;
+  const promise = new Promise((resolve) => {
+    timer = setTimeout(resolve, ms);
+  });
+  return { promise, cancel: () => clearTimeout(timer) };
+}
+
+function cancellableTimeout(ms, message) {
+  let timer;
+  const promise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return { promise, cancel: () => clearTimeout(timer) };
 }
 
 function concatenateChunks(chunks, totalSamples) {
@@ -29,14 +38,11 @@ function concatenateChunks(chunks, totalSamples) {
     audioData.set(chunk, offset);
     offset += chunk.length;
   }
-
   return audioData;
 }
 
 function convertChannels(audioData, inputChannels, outputChannels) {
-  if (inputChannels === outputChannels) {
-    return audioData;
-  }
+  if (inputChannels === outputChannels) return audioData;
 
   const frameCount = Math.floor(audioData.length / inputChannels);
   const convertedData = new Float32Array(frameCount * outputChannels);
@@ -63,9 +69,7 @@ function convertChannels(audioData, inputChannels, outputChannels) {
 }
 
 function resampleAudio(audioData, inputRate, outputRate, channels) {
-  if (inputRate === outputRate || audioData.length === 0) {
-    return audioData;
-  }
+  if (inputRate === outputRate || audioData.length === 0) return audioData;
 
   const inputFrameCount = Math.floor(audioData.length / channels);
   const outputFrameCount = Math.round(
@@ -93,100 +97,87 @@ function resampleAudio(audioData, inputRate, outputRate, channels) {
   return resampledData;
 }
 
-async function writeWithBackpressure(stream, audioData) {
-  while (true) {
-    try {
-      cpal.writeToStream(stream, audioData);
-      return;
-    } catch (error) {
-      if (!/buffer full/i.test(error.message)) {
-        throw error;
-      }
-      await sleep(5);
-    }
-  }
-}
-
-// Main function
 async function main() {
+  let host;
+  let inputDevice;
+  let outputDevice;
+  let inputStream;
+  let outputStream;
+
   try {
-    // Get the default input device
-    let inputDevice;
-    try {
-      inputDevice = cpal.getDefaultInputDevice();
-      console.log(`Using input device: ${inputDevice.name}`);
-    } catch (error) {
-      console.error('No input device available:', error.message);
-      return;
-    }
+    host = cpal.defaultHost();
+    inputDevice = host.defaultInputDevice();
+    outputDevice = host.defaultOutputDevice();
+    if (!inputDevice) throw new Error('No default input device');
+    if (!outputDevice) throw new Error('No default output device');
 
-    // Get the default output device
-    let outputDevice;
-    try {
-      outputDevice = cpal.getDefaultOutputDevice();
-      console.log(`Using output device: ${outputDevice.name}`);
-    } catch (error) {
-      console.error('No output device available:', error.message);
-      return;
-    }
+    const inputSupported = getF32StreamConfig(cpal, inputDevice, true);
+    const outputSupported = getF32StreamConfig(cpal, outputDevice, false);
+    const inputConfig = inputSupported.config();
+    const outputConfig = outputSupported.config();
 
-    const inputConfig = getF32StreamConfig(cpal, inputDevice.deviceId, true);
+    console.log(`Using input device: ${inputDevice.description().name()}`);
+    console.log(`Using output device: ${outputDevice.description().name()}`);
     console.log(
       `Input configuration: ${inputConfig.sampleRate} Hz, ${inputConfig.channels} channels, f32 format`
-    );
-
-    const outputConfig = getF32StreamConfig(
-      cpal,
-      outputDevice.deviceId,
-      false
     );
     console.log(
       `Output configuration: ${outputConfig.sampleRate} Hz, ${outputConfig.channels} channels, f32 format`
     );
 
-    // Prepare to collect recorded data
     const recordedChunks = [];
     let totalSamples = 0;
+    let lastRecordingProgress = -1;
     const expectedSamples =
-      inputConfig.sampleRate * inputConfig.channels * RECORD_DURATION_SECONDS;
+      inputConfig.sampleRate *
+      inputConfig.channels *
+      RECORD_DURATION_SECONDS;
+    let rejectInput;
+    const inputFailed = new Promise((_, reject) => {
+      rejectInput = reject;
+    });
 
     console.log(`\nRecording ${RECORD_DURATION_SECONDS} seconds of audio...`);
     console.log('Speak into your microphone...');
 
-    // Create an input stream with a callback to process incoming audio data
-    const inputStream = cpal.createStream(
-      inputDevice.deviceId,
-      true, // true for input stream
+    inputStream = inputDevice.buildInputStream(
       inputConfig,
+      cpal.SampleFormat.F32,
       (data) => {
-        // Store the incoming audio data
         recordedChunks.push(new Float32Array(data));
         totalSamples += data.length;
 
-        // Show recording progress
         const progress = Math.min(
           100,
           Math.round((totalSamples / expectedSamples) * 100)
         );
-        process.stdout.write(`\rRecording: ${progress}% complete`);
-      }
+        if (progress !== lastRecordingProgress) {
+          lastRecordingProgress = progress;
+          process.stdout.write(`\rRecording: ${progress}% complete`);
+        }
+      },
+      rejectInput
     );
+    inputStream.play();
+    const recordingDelay = cancellableDelay(RECORD_DURATION_SECONDS * 1000);
+    try {
+      await Promise.race([recordingDelay.promise, inputFailed]);
+    } finally {
+      recordingDelay.cancel();
+    }
 
-    // Wait for the recording duration
-    await new Promise((resolve) =>
-      setTimeout(resolve, RECORD_DURATION_SECONDS * 1000)
-    );
-
-    // Close the input stream to stop recording
     console.log('\nStopping recording...');
-    cpal.closeStream(inputStream);
+    inputStream.close();
+    inputStream = null;
 
-    // Calculate total recorded samples
     const totalRecordedSamples = recordedChunks.reduce(
-      (acc, chunk) => acc + chunk.length,
+      (total, chunk) => total + chunk.length,
       0
     );
-    console.log(`\nRecorded ${totalRecordedSamples} samples of audio data`);
+    if (totalRecordedSamples === 0) {
+      throw new Error('The input stream did not deliver any audio');
+    }
+    console.log(`Recorded ${totalRecordedSamples} samples`);
 
     const recordedData = concatenateChunks(
       recordedChunks,
@@ -203,6 +194,9 @@ async function main() {
       outputConfig.sampleRate,
       outputConfig.channels
     );
+    if (playbackData.length === 0) {
+      throw new Error('The recording did not contain a complete audio frame');
+    }
 
     if (
       inputConfig.sampleRate !== outputConfig.sampleRate ||
@@ -213,54 +207,75 @@ async function main() {
       );
     }
 
-    console.log('\nPlaying back the recorded audio...');
-
-    const outputStream = cpal.createStream(
-      outputDevice.deviceId,
-      false,
-      outputConfig,
-      () => {}
-    );
-
     const playbackDurationMs =
       (playbackData.length /
         outputConfig.channels /
         outputConfig.sampleRate) *
       1000;
     console.log(
-      `Expected playback duration: ${(playbackDurationMs / 1000).toFixed(
-        1
-      )} seconds`
+      `\nPlaying ${(playbackDurationMs / 1000).toFixed(1)} seconds of recorded audio...`
     );
 
-    const chunkFrameCount = 1024;
-    const chunkSampleCount = chunkFrameCount * outputConfig.channels;
-    const playbackStartedAt = Date.now();
+    let playbackOffset = 0;
+    let lastPlaybackProgress = -1;
+    let resolvePlayback;
+    let rejectPlayback;
+    const playbackFinished = new Promise((resolve, reject) => {
+      resolvePlayback = resolve;
+      rejectPlayback = reject;
+    });
 
-    for (let offset = 0; offset < playbackData.length; offset += chunkSampleCount) {
-      const chunk = playbackData.subarray(
-        offset,
-        Math.min(offset + chunkSampleCount, playbackData.length)
-      );
-      await writeWithBackpressure(outputStream, chunk);
+    outputStream = outputDevice.buildOutputStream(
+      outputConfig,
+      cpal.SampleFormat.F32,
+      (data) => {
+        data.fill(0);
+        const remaining = playbackData.length - playbackOffset;
+        const sampleCount = Math.min(data.length, remaining);
+        if (sampleCount > 0) {
+          data.set(
+            playbackData.subarray(
+              playbackOffset,
+              playbackOffset + sampleCount
+            )
+          );
+          playbackOffset += sampleCount;
+        }
 
-      const progress = Math.min(
-        100,
-        Math.round(((offset + chunk.length) / playbackData.length) * 100)
-      );
-      process.stdout.write(`\rPlayback queued: ${progress}%`);
+        const progress = Math.round(
+          (playbackOffset / playbackData.length) * 100
+        );
+        if (progress !== lastPlaybackProgress) {
+          lastPlaybackProgress = progress;
+          process.stdout.write(`\rPlayback: ${progress}% complete`);
+        }
+        if (playbackOffset === playbackData.length) resolvePlayback();
+      },
+      rejectPlayback
+    );
+    outputStream.play();
+
+    const playbackTimeout = cancellableTimeout(
+      playbackDurationMs + 5_000,
+      'Timed out while waiting for output playback'
+    );
+    try {
+      await Promise.race([playbackFinished, playbackTimeout.promise]);
+    } finally {
+      playbackTimeout.cancel();
     }
-
-    console.log('\nFinishing playback...');
-    const elapsedPlaybackMs = Date.now() - playbackStartedAt;
-    await sleep(Math.max(0, playbackDurationMs - elapsedPlaybackMs) + 500);
-
-    cpal.closeStream(outputStream);
-    console.log('Done!');
+    await sleep(250);
+    console.log('\nDone!');
   } catch (error) {
-    console.error('\nError:', error.message);
+    console.error(`\n[${error.code || 'ERROR'}] ${error.message}`);
+    process.exitCode = 1;
+  } finally {
+    if (inputStream) inputStream.close();
+    if (outputStream) outputStream.close();
+    if (inputDevice) inputDevice.close();
+    if (outputDevice) outputDevice.close();
+    if (host) host.close();
   }
 }
 
-// Run the main function
 main();

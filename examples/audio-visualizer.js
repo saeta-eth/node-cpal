@@ -1,135 +1,97 @@
-/**
- * audio-visualizer.js
- *
- * This example demonstrates how to create a simple terminal-based
- * audio visualizer using node-cpal's input stream capabilities.
- */
+/** Render microphone volume using CPAL's typed input callback. */
 
-// Try to load the module from the parent directory (development) or from node_modules (installed)
 let cpal;
 try {
   cpal = require('../');
-} catch (e) {
+} catch (_) {
   cpal = require('node-cpal');
 }
 const { getF32StreamConfig } = require('./f32-config');
 
-// Configuration
-const DURATION_SECONDS = 30; // Run for 30 seconds
-const VISUALIZATION_WIDTH = 50; // Width of the visualization in characters
+const DURATION_SECONDS = 30;
+const VISUALIZATION_WIDTH = 50;
 
-// Flag to track if we should exit
-let shouldExit = false;
-
-// Handle Ctrl+C to exit gracefully
-process.on('SIGINT', () => {
-  console.log('\nReceived SIGINT. Shutting down...');
-  shouldExit = true;
+let resolveExit;
+const exitRequested = new Promise((resolve) => {
+  resolveExit = resolve;
 });
 
-// Function to calculate RMS (Root Mean Square) of audio data
+process.on('SIGINT', () => {
+  console.log('\nReceived SIGINT. Shutting down...');
+  resolveExit();
+});
+
 function calculateRMS(audioData) {
+  if (audioData.length === 0) return 0;
+
   let sum = 0;
-  for (let i = 0; i < audioData.length; i++) {
-    sum += audioData[i] * audioData[i];
+  for (const sample of audioData) {
+    sum += sample * sample;
   }
   return Math.sqrt(sum / audioData.length);
 }
 
-// Function to create a simple terminal visualization
 function visualizeAudio(level, width) {
-  // Scale the level to the width
   const barLength = Math.floor(level * width);
-
-  // Create the visualization bar
   let bar = '';
-  for (let i = 0; i < width; i++) {
-    if (i < barLength) {
-      // Use different characters based on level for a more dynamic visualization
-      if (i > width * 0.8) {
-        bar += '█'; // High level
-      } else if (i > width * 0.4) {
-        bar += '▓'; // Medium level
-      } else {
-        bar += '▒'; // Low level
-      }
-    } else {
-      bar += ' '; // Empty space
-    }
+
+  for (let index = 0; index < width; index++) {
+    if (index >= barLength) bar += ' ';
+    else if (index > width * 0.8) bar += '█';
+    else if (index > width * 0.4) bar += '▓';
+    else bar += '▒';
   }
 
-  // Add a frame and level indicator
   return `|${bar}| ${(level * 100).toFixed(1)}%`;
 }
 
-// Main function
 async function main() {
+  let host;
+  let device;
+  let stream;
+
   try {
-    // Get the default input device
-    let inputDevice;
-    try {
-      inputDevice = cpal.getDefaultInputDevice();
-      console.log(`Using input device: ${inputDevice.name}`);
-    } catch (error) {
-      console.error('No input device available:', error.message);
-      return;
-    }
+    host = cpal.defaultHost();
+    device = host.defaultInputDevice();
+    if (!device) throw new Error('No default input device');
 
-    const selectedConfig = getF32StreamConfig(
-      cpal,
-      inputDevice.deviceId,
-      true
-    );
-
+    const supported = getF32StreamConfig(cpal, device, true);
+    const config = supported.config();
+    console.log(`Using input device: ${device.description().name()}`);
     console.log(
-      `Using configuration: ${selectedConfig.sampleRate} Hz, ${selectedConfig.channels} channels, f32 format`
+      `Using configuration: ${config.sampleRate} Hz, ${config.channels} channels, f32 format`
     );
     console.log(`\nAudio Visualizer - Running for ${DURATION_SECONDS} seconds`);
     console.log('Make some noise to see the visualization!');
     console.log('Press Ctrl+C to exit early\n');
 
-    // Create an input stream with a callback to process incoming audio
-    const stream = cpal.createStream(
-      inputDevice.deviceId,
-      true, // true for input stream
-      selectedConfig,
+    stream = device.buildInputStream(
+      config,
+      cpal.SampleFormat.F32,
       (data) => {
-        // Calculate the audio level (RMS)
-        const level = calculateRMS(data);
-
-        // Apply some scaling to make the visualization more sensitive
-        // Adjust this value based on your microphone and environment
-        const scaledLevel = Math.min(1.0, level * 5.0);
-
-        // Create and display the visualization
-        const visualization = visualizeAudio(scaledLevel, VISUALIZATION_WIDTH);
-        process.stdout.write(`\r${visualization}`);
-
-        // Check if we should exit
-        if (shouldExit) {
-          cpal.closeStream(stream);
-          console.log('\nVisualizer stopped');
-          process.exit(0);
-        }
-      }
+        const level = Math.min(1, calculateRMS(data) * 5);
+        process.stdout.write(
+          `\r${visualizeAudio(level, VISUALIZATION_WIDTH)}`
+        );
+      },
+      (error) => console.error(`\n[${error.code}] ${error.message}`)
     );
+    stream.play();
 
-    console.log('Audio visualizer started. Press Ctrl+C to exit.');
-
-    // Run for the specified duration
-    await new Promise((resolve) =>
-      setTimeout(resolve, DURATION_SECONDS * 1000)
-    );
-
-    // Close the stream
+    await Promise.race([
+      new Promise((resolve) => setTimeout(resolve, DURATION_SECONDS * 1000)),
+      exitRequested,
+    ]);
     console.log('\n\nStopping audio visualization...');
-    cpal.closeStream(stream);
-
     console.log('Done!');
   } catch (error) {
-    console.error('\nError:', error.message);
+    console.error(`\n[${error.code || 'ERROR'}] ${error.message}`);
+    process.exitCode = 1;
+  } finally {
+    if (stream) stream.close();
+    if (device) device.close();
+    if (host) host.close();
   }
 }
 
-// Run the main function
 main();

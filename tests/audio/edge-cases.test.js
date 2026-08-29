@@ -1,248 +1,130 @@
 const assert = require('assert');
-const cpal = require('../..');
-const {
-  generateSineWave,
-  getTestConfig,
-  getTestDevice,
-  withTestStream,
-} = require('../helpers/hardware');
+const cpal = require('../..').convenience;
+const { getTestConfig, getTestDevice } = require('../helpers/hardware');
 
-describe('Edge Cases', () => {
+const SAMPLE_ARRAYS = {
+  i8: Int8Array,
+  i16: Int16Array,
+  i24: Int32Array,
+  i32: Int32Array,
+  i64: BigInt64Array,
+  u8: Uint8Array,
+  u16: Uint16Array,
+  u24: Uint32Array,
+  u32: Uint32Array,
+  u64: BigUint64Array,
+  f32: Float32Array,
+  f64: Float64Array,
+  dsdu8: Uint8Array,
+  dsdu16: Uint16Array,
+  dsdu32: Uint32Array,
+};
+
+describe('Convenience stream edge cases', () => {
   let device;
   let config;
 
   before(function () {
     device = getTestDevice(false);
-    if (!device) {
-      this.skip();
-    }
-
     config = getTestConfig(device, false);
-    if (!config) {
-      this.skip();
-    }
+    if (!device || !config) this.skip();
   });
 
-  it('should handle zero-length audio buffers', async () => {
-    const stream = cpal.createStream(
-      device.deviceId,
-      false,
+  it('rejects empty, partial-frame, and wrongly typed buffers', async () => {
+    const stream = await cpal.createOutputStream({
+      deviceId: device.deviceId,
       config,
-      () => {}
-    );
+      onError() {},
+    });
     try {
-      const buffer = new Float32Array(0);
-      assert.throws(() => {
-        cpal.writeToStream(stream, buffer);
-      }, /invalid buffer size/i);
-    } finally {
-      cpal.closeStream(stream);
-    }
-  });
-
-  it('should handle very small audio buffers', async () => {
-    await withTestStream(device, false, config, async (stream) => {
-      // Test with a tiny buffer (1ms of audio)
-      const buffer = generateSineWave(
-        440,
-        config.sampleRate,
-        config.channels,
-        0.001
+      assert.throws(
+        () => stream.write(new Float32Array(0)),
+        (error) => error instanceof cpal.CpalError && error.code === 'INVALID_BUFFER'
       );
-      cpal.writeToStream(stream, buffer);
-    });
-  });
-
-  it('should handle multiple supported f32 configurations', async function () {
-    const configs = cpal
-      .getSupportedOutputConfigs(device.deviceId)
-      .filter((supportedConfig) => supportedConfig.format === 'f32');
-    if (configs.length < 2) {
-      this.skip();
-    }
-
-    for (let i = 0; i < 2; i++) {
-      const testConfig = {
-        channels: configs[i].channels,
-        sampleRate: configs[i].minSampleRate,
-        format: configs[i].format,
-      };
-
-      await withTestStream(device, false, testConfig, async (stream) => {
-        const buffer = generateSineWave(
-          440,
-          testConfig.sampleRate,
-          testConfig.channels,
-          0.2
-        );
-        cpal.writeToStream(stream, buffer);
-      });
-    }
-  });
-
-  it('should handle maximum supported values', async () => {
-    const configs = cpal
-      .getSupportedOutputConfigs(device.deviceId)
-      .filter((supportedConfig) => supportedConfig.format === 'f32');
-    const maxRateConfig = configs.reduce((maximum, supportedConfig) =>
-      supportedConfig.maxSampleRate > maximum.maxSampleRate
-        ? supportedConfig
-        : maximum
-    );
-    const maxChannelConfig = configs.reduce((maximum, supportedConfig) =>
-      supportedConfig.channels > maximum.channels ? supportedConfig : maximum
-    );
-    const testConfigs = [
-      {
-        channels: maxRateConfig.channels,
-        sampleRate: maxRateConfig.maxSampleRate,
-        format: maxRateConfig.format,
-      },
-      {
-        channels: maxChannelConfig.channels,
-        sampleRate: maxChannelConfig.minSampleRate,
-        format: maxChannelConfig.format,
-      },
-    ].filter(
-      (testConfig, index, allConfigs) =>
-        allConfigs.findIndex(
-          (candidate) =>
-            candidate.channels === testConfig.channels &&
-            candidate.sampleRate === testConfig.sampleRate &&
-            candidate.format === testConfig.format
-        ) === index
-    );
-
-    for (const testConfig of testConfigs) {
-      await withTestStream(device, false, testConfig, async (stream) => {
-        const buffer = generateSineWave(
-          440,
-          testConfig.sampleRate,
-          testConfig.channels,
-          0.2
-        );
-        cpal.writeToStream(stream, buffer);
-      });
-    }
-  });
-
-  it('should handle rapid pause/resume cycles', async () => {
-    const stream = cpal.createStream(
-      device.deviceId,
-      false,
-      config,
-      () => {}
-    );
-    const buffer = generateSineWave(
-      440,
-      config.sampleRate,
-      config.channels,
-      0.1
-    );
-
-    try {
-      for (let i = 0; i < 10; i++) {
-        cpal.writeToStream(stream, buffer);
-        cpal.pauseStream(stream);
-        assert.strictEqual(cpal.isStreamActive(stream), false);
-        cpal.resumeStream(stream);
-        assert.strictEqual(cpal.isStreamActive(stream), true);
-      }
-    } finally {
-      cpal.closeStream(stream);
-    }
-  });
-
-  it('should handle multiple streams with different configurations', async function () {
-    const configs = cpal
-      .getSupportedOutputConfigs(device.deviceId)
-      .filter((supportedConfig) => supportedConfig.format === 'f32');
-    if (configs.length < 2) {
-      this.skip();
-    }
-
-    const streams = [];
-
-    try {
-      // Create streams with different configurations
-      for (const config of configs.slice(0, 3)) {
-        // Test first 3 configs
-        const testConfig = {
-          channels: config.channels,
-          sampleRate: config.minSampleRate,
-          format: config.format,
-        };
-        const stream = cpal.createStream(
-          device.deviceId,
-          false,
-          testConfig,
-          () => {}
-        );
-        streams.push(stream);
-      }
-
-      // Write different audio to each stream
-      streams.forEach((stream, index) => {
-        const frequency = 440 * (index + 1);
-        const buffer = generateSineWave(
-          frequency,
-          configs[index].minSampleRate,
-          configs[index].channels,
-          0.2
-        );
-        cpal.writeToStream(stream, buffer);
-      });
-    } finally {
-      streams.forEach((stream) => cpal.closeStream(stream));
-    }
-
-    streams.forEach((stream) => {
-      assert.strictEqual(cpal.isStreamActive(stream), false);
-    });
-  });
-
-  it('should handle stream closure during active playback', async () => {
-    const stream = cpal.createStream(
-      device.deviceId,
-      false,
-      config,
-      () => {}
-    );
-    const buffer = generateSineWave(
-      440,
-      config.sampleRate,
-      config.channels,
-      1.0
-    );
-
-    try {
-      cpal.writeToStream(stream, buffer);
-      cpal.closeStream(stream);
-
-      assert.throws(() => {
-        cpal.writeToStream(stream, buffer);
-      }, /Stream not found/);
-    } finally {
-      cpal.closeStream(stream);
-    }
-  });
-
-  it('should reject unsupported audio buffer types', async () => {
-    await withTestStream(device, false, config, async (stream) => {
-      const invalidBuffers = [
-        new Float64Array(16),
-        new Int16Array(16),
-        new Uint8Array(16),
-        Array(16).fill(0),
-      ];
-
-      invalidBuffers.forEach((buffer) => {
+      if (config.channels > 1) {
         assert.throws(
-          () => cpal.writeToStream(stream, buffer),
-          /failed to downcast|Float32Array/i
+          () => stream.write(new Float32Array(config.channels - 1)),
+          (error) => error instanceof cpal.CpalError && error.code === 'INVALID_BUFFER'
         );
+      }
+      assert.throws(() => stream.write(new Int16Array(config.channels)), TypeError);
+    } finally {
+      await stream.close();
+    }
+  });
+
+  it('uses the correct typed array for every format exposed by the device', async function () {
+    const configs = [...new Map(
+      cpal.getSupportedOutputConfigs(device.deviceId)
+        .map((capability) => [capability.sampleFormat, capability])
+    ).values()];
+    if (configs.length === 0) this.skip();
+
+    for (const capability of configs) {
+      const Constructor = SAMPLE_ARRAYS[capability.sampleFormat];
+      const stream = await cpal.createOutputStream({
+        deviceId: device.deviceId,
+        config: {
+          channels: capability.channels,
+          sampleRate: capability.minSampleRate,
+          sampleFormat: capability.sampleFormat,
+        },
+        onError() {},
       });
-      assert(cpal.isStreamActive(stream));
+      try {
+        assert.strictEqual(
+          stream.write(new Constructor(capability.channels * 8)),
+          true
+        );
+      } finally {
+        await stream.close();
+      }
+    }
+  }).timeout(20_000);
+
+  it('validates the significant range of 24-bit typed-array samples', async function () {
+    const capability = cpal
+      .getSupportedOutputConfigs(device.deviceId)
+      .find(({ sampleFormat }) => sampleFormat === 'i24' || sampleFormat === 'u24');
+    if (!capability) this.skip();
+
+    const stream = await cpal.createOutputStream({
+      deviceId: device.deviceId,
+      config: {
+        channels: capability.channels,
+        sampleRate: capability.minSampleRate,
+        sampleFormat: capability.sampleFormat,
+      },
+      onError() {},
     });
+    try {
+      const data = capability.sampleFormat === 'i24'
+        ? new Int32Array(capability.channels)
+        : new Uint32Array(capability.channels);
+      data[0] = capability.sampleFormat === 'i24' ? 1 << 23 : 1 << 24;
+      assert.throws(() => stream.write(data), RangeError);
+    } finally {
+      await stream.close();
+    }
+  });
+
+  it('closes idempotently and rejects later operations', async () => {
+    const stream = await cpal.createOutputStream({
+      deviceId: device.deviceId,
+      config,
+      onError() {},
+    });
+    await stream.close();
+    await stream.close();
+
+    assert.strictEqual(stream.state, 'closed');
+    assert.throws(
+      () => stream.bufferedFrames,
+      (error) => error instanceof cpal.CpalError && error.code === 'STREAM_CLOSED'
+    );
+    assert.throws(
+      () => stream.write(new Float32Array(config.channels)),
+      (error) => error instanceof cpal.CpalError && error.code === 'STREAM_CLOSED'
+    );
   });
 });

@@ -129,8 +129,10 @@ jobs:
           mkdir -p dist
           cp index.js dist/
           cp index.d.ts dist/
+          cp cpal-values.js dist/
           cp package.json dist/
           cp README.md dist/
+          cp -r docs dist/
           cp -r examples dist/
           mkdir -p dist/bin
 

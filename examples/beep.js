@@ -1,115 +1,69 @@
-/**
- * beep.js
- *
- * This example demonstrates how to create a simple beep sound
- * using node-cpal's output stream capabilities.
- * It plays a 440 Hz sine wave for 1 second.
- */
+/** Play a 440 Hz sine wave for one second with CPAL's typed output callback. */
 
-// Try to load the module from the parent directory (development) or from node_modules (installed)
 let cpal;
 try {
   cpal = require('../');
-} catch (e) {
+} catch (_) {
   cpal = require('node-cpal');
 }
 const { getF32StreamConfig } = require('./f32-config');
 
-// Configuration
-const FREQUENCY = 440; // 440 Hz (A4 note)
-const DURATION_SECONDS = 1; // Play for 1 second
+const FREQUENCY = 440;
+const DURATION_SECONDS = 1;
 
-// Main function
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function main() {
+  let host;
+  let device;
+  let stream;
+
   try {
-    // Get the default output device
-    let outputDevice;
-    try {
-      outputDevice = cpal.getDefaultOutputDevice();
-      console.log(`Using output device: ${outputDevice.name}`);
-    } catch (error) {
-      console.error('No output device available:', error.message);
-      return;
-    }
+    host = cpal.defaultHost();
+    device = host.defaultOutputDevice();
+    if (!device) throw new Error('No default output device');
 
-    const selectedConfig = getF32StreamConfig(
-      cpal,
-      outputDevice.deviceId,
-      false
-    );
+    const supported = getF32StreamConfig(cpal, device, false);
+    const config = supported.config();
+    let frameClock = 0;
+
     console.log(
-      `Using configuration: ${selectedConfig.sampleRate} Hz, ${selectedConfig.channels} channels, f32 format`
-    );
-    console.log(
-      `Playing a ${FREQUENCY} Hz tone for ${DURATION_SECONDS} second(s)...`
+      `Playing ${FREQUENCY} Hz through ${device.description().name()} at ${config.sampleRate} Hz`
     );
 
-    // Create an output stream (isInput = false for output)
-    const stream = cpal.createStream(
-      outputDevice.deviceId,
-      false, // false for output stream
-      selectedConfig,
-      () => {} // Empty callback for output stream
+    stream = device.buildOutputStream(
+      config,
+      cpal.SampleFormat.F32,
+      (data) => {
+        for (let frame = 0; frame < data.length / config.channels; frame++) {
+          const sample =
+            frameClock < config.sampleRate * DURATION_SECONDS
+              ? Math.sin(
+                  (2 * Math.PI * FREQUENCY * frameClock) / config.sampleRate
+                ) * 0.3
+              : 0;
+          for (let channel = 0; channel < config.channels; channel++) {
+            data[frame * config.channels + channel] = sample;
+          }
+          frameClock++;
+        }
+      },
+      (error) => console.error(`[${error.code}] ${error.message}`)
     );
 
-    // Generate a sine wave
-    const sampleCount =
-      selectedConfig.sampleRate * selectedConfig.channels * DURATION_SECONDS;
-    const bufferSize = 1024; // Process audio in chunks
-    let sampleClock = 0;
-
-    // Function to generate the next chunk of audio
-    function generateSineWave(size) {
-      const buffer = new Float32Array(size);
-      for (let i = 0; i < size; i++) {
-        const frame = Math.floor(sampleClock / selectedConfig.channels);
-        // Generate sine wave: sin(2π * frequency * time)
-        buffer[i] = Math.sin(
-          (2 * Math.PI * FREQUENCY * frame) / selectedConfig.sampleRate
-        );
-        sampleClock++;
-      }
-      return buffer;
-    }
-
-    // Write audio data in chunks until we've generated the full duration
-    let samplesWritten = 0;
-    while (samplesWritten < sampleCount) {
-      // Calculate how many samples to write in this chunk
-      const samplesToWrite = Math.min(bufferSize, sampleCount - samplesWritten);
-
-      // Generate and write the audio data
-      const audioData = generateSineWave(samplesToWrite);
-      cpal.writeToStream(stream, audioData);
-
-      samplesWritten += samplesToWrite;
-
-      // Show progress
-      const progress = Math.min(
-        100,
-        Math.round((samplesWritten / sampleCount) * 100)
-      );
-      process.stdout.write(`\rProgress: ${progress}%`);
-
-      const chunkDurationMs =
-        (samplesToWrite /
-          selectedConfig.channels /
-          selectedConfig.sampleRate) *
-        1000;
-      await new Promise((resolve) => setTimeout(resolve, chunkDurationMs));
-    }
-
-    // Wait a bit to ensure all audio is played
-    console.log('\nFinishing playback...');
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    // Close the stream
-    cpal.closeStream(stream);
+    stream.play();
+    await sleep(DURATION_SECONDS * 1000 + 250);
     console.log('Done!');
   } catch (error) {
-    console.error('\nError:', error.message);
+    console.error(`[${error.code || 'ERROR'}] ${error.message}`);
+    process.exitCode = 1;
+  } finally {
+    if (stream) stream.close();
+    if (device) device.close();
+    if (host) host.close();
   }
 }
 
-// Run the main function
 main();
