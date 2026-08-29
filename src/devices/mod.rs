@@ -313,6 +313,7 @@ fn supports_loopback_for_host(
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn darwin_version_supports_coreaudio_loopback(major: u32, minor: u32) -> bool {
     // macOS 14.6 is Darwin 23.6; later Darwin releases preserve availability.
     major > 23 || (major == 23 && minor >= 6)
