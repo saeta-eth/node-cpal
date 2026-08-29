@@ -1,150 +1,169 @@
-/**
- * list-devices.js
- *
- * This example demonstrates how to enumerate audio hosts and devices
- * using node-cpal, and display their capabilities.
- */
+/** Enumerate hosts and devices through CPAL's canonical API. */
 
-const cpal = require('../');
-
-// Helper function to format sample rates nicely
-function formatSampleRates(minRate, maxRate) {
-  if (minRate === maxRate) {
-    return `${minRate} Hz`;
-  }
-  return `${minRate} - ${maxRate} Hz`;
+let cpal;
+try {
+  cpal = require('../');
+} catch (_) {
+  cpal = require('node-cpal');
 }
 
-function getCapabilities(getConfigs) {
+function formatSampleRates(minRate, maxRate) {
+  return minRate === maxRate
+    ? `${minRate} Hz`
+    : `${minRate} - ${maxRate} Hz`;
+}
+
+function formatBufferSize(bufferSize) {
+  return bufferSize.type === 'range'
+    ? `${bufferSize.min} - ${bufferSize.max} frames`
+    : 'unknown';
+}
+
+function getCapabilities(device, isInput) {
   try {
-    return { configs: getConfigs(), error: null };
+    return {
+      configs: [
+        ...(isInput
+          ? device.supportedInputConfigs()
+          : device.supportedOutputConfigs()),
+      ],
+      error: null,
+    };
   } catch (error) {
     return { configs: [], error: error.message };
   }
 }
 
 function formatSupportedConfigs(label, capabilities) {
-  const result = [];
-
-  if (capabilities.configs.length > 0) {
-    result.push(`${label} Capabilities:`);
-    capabilities.configs.forEach((config, index) => {
-      result.push(
-        `  Config #${index + 1}: ${formatSampleRates(
-          config.minSampleRate,
-          config.maxSampleRate
-        )}, ${config.channels} channels, ${config.format} format`
-      );
-    });
-  } else if (capabilities.error) {
-    result.push(`${label} Capabilities: Unavailable (${capabilities.error})`);
-  } else {
-    result.push(`${label} Capabilities: None`);
+  if (capabilities.error) {
+    return [`${label} capabilities: unavailable (${capabilities.error})`];
   }
-
-  return result;
-}
-
-// Helper function to query and format device capabilities
-function formatDeviceCapabilities(deviceId) {
-  const inputCapabilities = getCapabilities(() =>
-    cpal.getSupportedInputConfigs(deviceId)
-  );
-  const outputCapabilities = getCapabilities(() =>
-    cpal.getSupportedOutputConfigs(deviceId)
-  );
+  if (capabilities.configs.length === 0) {
+    return [`${label} capabilities: none`];
+  }
 
   return [
-    ...formatSupportedConfigs('Input', inputCapabilities),
-    ...formatSupportedConfigs('Output', outputCapabilities),
-  ].join('\n');
+    `${label} capabilities:`,
+    ...capabilities.configs.map(
+      (config, index) =>
+        `  #${index + 1}: ${formatSampleRates(
+          config.minSampleRate(),
+          config.maxSampleRate()
+        )}, ${config.channels()} channels, ${config.sampleFormat()} format, buffer ${formatBufferSize(
+          config.bufferSize()
+        )}`
+    ),
+  ];
 }
 
-// Main function
-async function main() {
+function sameDevice(left, right) {
+  return Boolean(left && right && left.id().equals(right.id()));
+}
+
+function formatDefaultConfig(device, isInput) {
   try {
-    console.log('=== Audio Hosts ===');
-    const hosts = cpal.getHosts();
-    hosts.forEach((host) => {
-      console.log(`Host: ${host.name} (ID: ${host.id})`);
-    });
-    console.log('');
-
-    console.log('=== Audio Devices ===');
-    try {
-      const devices = hosts.flatMap((host) => cpal.getDevices(host.id));
-      console.log(`Found ${devices.length} audio devices\n`);
-
-      // Display all devices with their capabilities
-      devices.forEach((device, index) => {
-        console.log(`Device #${index + 1}: ${device.name}`);
-        console.log(`  ID: ${device.deviceId}`);
-        console.log(`  Host: ${device.hostId}`);
-        console.log(`  Default Input: ${device.isDefaultInput ? 'Yes' : 'No'}`);
-        console.log(
-          `  Default Output: ${device.isDefaultOutput ? 'Yes' : 'No'}`
-        );
-        console.log(
-          formatDeviceCapabilities(device.deviceId)
-            .split('\n')
-            .map((line) => `  ${line}`)
-            .join('\n')
-        );
-        console.log('');
-      });
-    } catch (error) {
-      console.error('Error getting devices:', error.message);
-    }
-
-    // Display default devices
-    try {
-      const defaultInput = cpal.getDefaultInputDevice();
-      console.log(
-        `Default Input Device: ${defaultInput.name} (ID: ${defaultInput.deviceId})`
-      );
-    } catch (error) {
-      console.log('No default input device available');
-    }
-
-    try {
-      const defaultOutput = cpal.getDefaultOutputDevice();
-      console.log(
-        `Default Output Device: ${defaultOutput.name} (ID: ${defaultOutput.deviceId})`
-      );
-    } catch (error) {
-      console.log('No default output device available');
-    }
-    console.log('');
-
-    // Display detailed configuration for default devices
-    try {
-      const defaultOutput = cpal.getDefaultOutputDevice();
-      const defaultConfig = cpal.getDefaultOutputConfig(defaultOutput.deviceId);
-      console.log('=== Default Output Configuration ===');
-      console.log(`Device: ${defaultOutput.name}`);
-      console.log(`Sample Rate: ${defaultConfig.sampleRate} Hz`);
-      console.log(`Channels: ${defaultConfig.channels}`);
-      console.log(`Format: ${defaultConfig.sampleFormat}`);
-      console.log('');
-    } catch (error) {
-      console.log('Could not get default output configuration:', error.message);
-    }
-
-    try {
-      const defaultInput = cpal.getDefaultInputDevice();
-      const defaultConfig = cpal.getDefaultInputConfig(defaultInput.deviceId);
-      console.log('=== Default Input Configuration ===');
-      console.log(`Device: ${defaultInput.name}`);
-      console.log(`Sample Rate: ${defaultConfig.sampleRate} Hz`);
-      console.log(`Channels: ${defaultConfig.channels}`);
-      console.log(`Format: ${defaultConfig.sampleFormat}`);
-    } catch (error) {
-      console.log('Could not get default input configuration:', error.message);
-    }
+    const config = isInput
+      ? device.defaultInputConfig()
+      : device.defaultOutputConfig();
+    return `${config.sampleRate()} Hz, ${config.channels()} channels, ${config.sampleFormat()} format`;
   } catch (error) {
-    console.error('Error:', error.message);
+    return `unavailable (${error.message})`;
   }
 }
 
-// Run the main function
-main();
+function formatDefaultDevice(device) {
+  if (!device) return 'none';
+  try {
+    return device.description().name();
+  } catch (error) {
+    return `unavailable (${error.message})`;
+  }
+}
+
+function printDevice(device, index, defaultInput, defaultOutput) {
+  const description = device.description();
+  const id = device.id();
+
+  console.log(`Device #${index + 1}: ${description.name()}`);
+  console.log(`  ID: ${id}`);
+  console.log(`  Host: ${id.host().name()} (${id.host()})`);
+  console.log(`  Direction: ${description.direction()}`);
+  console.log(`  Type: ${description.deviceType()}`);
+  console.log(`  Interface: ${description.interfaceType()}`);
+  console.log(`  Manufacturer: ${description.manufacturer() || 'unknown'}`);
+  console.log(`  Driver: ${description.driver() || 'unknown'}`);
+  console.log(`  Address: ${description.address() || 'unknown'}`);
+  console.log(`  Default input: ${sameDevice(device, defaultInput) ? 'yes' : 'no'}`);
+  console.log(`  Default output: ${sameDevice(device, defaultOutput) ? 'yes' : 'no'}`);
+
+  if (device.supportsInput()) {
+    console.log(`  Default input config: ${formatDefaultConfig(device, true)}`);
+  }
+  if (device.supportsOutput()) {
+    console.log(`  Default output config: ${formatDefaultConfig(device, false)}`);
+  }
+
+  const capabilities = [
+    ...formatSupportedConfigs('Input', getCapabilities(device, true)),
+    ...formatSupportedConfigs('Output', getCapabilities(device, false)),
+  ];
+  for (const line of capabilities) console.log(`  ${line}`);
+
+  const extended = [...description.extended()];
+  if (extended.length > 0) {
+    console.log('  Extended details:');
+    for (const line of extended) console.log(`    ${line}`);
+  }
+  console.log('');
+}
+
+function main() {
+  const availableIds = cpal.availableHosts();
+  const available = new Set(availableIds.map(String));
+
+  console.log('=== Compiled Audio Hosts ===');
+  for (const id of cpal.ALL_HOSTS) {
+    console.log(
+      `${id.name()} (${id}): ${available.has(String(id)) ? 'available' : 'unavailable'}`
+    );
+  }
+  console.log('');
+
+  for (const id of availableIds) {
+    let host;
+    let defaultInput;
+    let defaultOutput;
+    let devices = [];
+
+    try {
+      host = cpal.hostFromId(id);
+      defaultInput = host.defaultInputDevice();
+      defaultOutput = host.defaultOutputDevice();
+      devices = [...host.devices()];
+
+      console.log(`=== ${host.id().name()} Devices ===`);
+      console.log(`Found ${devices.length} device(s)\n`);
+      devices.forEach((device, index) =>
+        printDevice(device, index, defaultInput, defaultOutput)
+      );
+
+      console.log(`Default input: ${formatDefaultDevice(defaultInput)}`);
+      console.log(`Default output: ${formatDefaultDevice(defaultOutput)}`);
+      console.log('');
+    } catch (error) {
+      console.error(`Could not inspect ${id.name()}: ${error.message}`);
+    } finally {
+      for (const device of devices) device.close();
+      if (defaultInput) defaultInput.close();
+      if (defaultOutput) defaultOutput.close();
+      if (host) host.close();
+    }
+  }
+}
+
+try {
+  main();
+} catch (error) {
+  console.error(`[${error.code || 'ERROR'}] ${error.message}`);
+  process.exitCode = 1;
+}

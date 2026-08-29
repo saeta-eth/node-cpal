@@ -37,6 +37,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -52,6 +54,12 @@ jobs:
 
       - name: Run deterministic tests
         run: npm test
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Lint Rust crate
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Check Rust crate
         run: cargo check

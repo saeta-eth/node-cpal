@@ -1,419 +1,303 @@
 # node-cpal
 
-Node.js bindings for CPAL (Cross-Platform Audio Library), providing low-level audio functionality for Node.js applications.
+One-to-one Node.js bindings for [CPAL 0.18.2](https://github.com/RustAudio/cpal). The top-level API follows CPAL's object hierarchy and behavior: `Host` owns `Device` objects, `Device` synchronously builds paused `Stream` objects, and stream callbacks receive the same typed or raw audio data and timestamps as CPAL.
 
-[![npm version](https://img.shields.io/npm/v/node-cpal.svg)](https://www.npmjs.com/package/node-cpal)
-[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](https://opensource.org/licenses/ISC)
-[![CI](https://github.com/saeta-eth/node-cpal/actions/workflows/ci.yml/badge.svg)](https://github.com/saeta-eth/node-cpal/actions/workflows/ci.yml)
-[![Build and Publish](https://github.com/saeta-eth/node-cpal/actions/workflows/build-and-publish.yml/badge.svg)](https://github.com/saeta-eth/node-cpal/actions/workflows/build-and-publish.yml)
+The higher-level queued, push/pull, and loopback API is available separately as `cpal.convenience`; those helpers are not part of the canonical top-level surface.
 
-## Overview
+Upgrading from 0.2.0? Follow the [0.2.0 to 1.0.0 migration guide](./docs/migration-0.2-to-1.0.md).
 
-node-cpal provides native Node.js bindings to the [CPAL](https://github.com/RustAudio/cpal) Rust library, giving Node.js developers access to low-level, cross-platform audio capabilities. This library enables audio device enumeration, audio playback, and recording with minimal latency across Windows, macOS, and Linux.
+## Platform support
 
-## Features
+| Platform | Architectures | Built-in backend |
+| --- | --- | --- |
+| macOS | x64, arm64 | CoreAudio |
+| Linux | x64, arm64 | ALSA |
+| Windows | x64 | WASAPI |
 
-- **Complete Audio Device Management**
+Optional backend packages compile the same binding with another CPAL feature:
 
-  - Enumerate audio hosts and devices
-  - Get default input/output devices
-  - Query device capabilities (formats, sample rates, channels)
+| Package | Backend |
+| --- | --- |
+| `@node-cpal/backend-jack` | JACK |
+| `@node-cpal/backend-pipewire` | PipeWire |
+| `@node-cpal/backend-pulseaudio` | PulseAudio |
+| `@node-cpal/backend-asio` | ASIO |
 
-- **Audio Stream Control**
-
-  - Create input (recording) streams
-  - Create output (playback) streams
-  - Write audio data to output streams
-  - Read audio data from input streams
-  - Pause, resume, and close streams
-
-- **Developer-Friendly**
-
-  - Comprehensive TypeScript definitions
-  - Synchronous device and stream-control API
-  - Detailed error messages
-
-- **Cross-Platform**
-  - Windows (WASAPI)
-  - macOS (CoreAudio)
-  - Linux (ALSA, JACK)
-
-## Installation
+Node.js 22 or newer is required. Source builds require Rust 1.85 or newer plus the selected backend's development libraries.
 
 ```bash
 npm install node-cpal
 ```
 
-### Platform Support
+## Canonical quick start
 
-node-cpal provides pre-built binaries for the following platforms:
+This is the CPAL flow translated directly to JavaScript:
 
-- Windows (x64)
-- macOS (x64 and ARM64/Apple Silicon)
-- Linux (x64 and ARM64)
-
-The package automatically detects your platform and loads the appropriate binary.
-
-### Requirements
-
-- Node.js 22.0.0 or later
-- For building from source:
-  - Rust toolchain (rustc, cargo)
-  - Platform-specific audio development libraries:
-    - **Windows**: No additional requirements
-    - **macOS**: No additional requirements
-    - **Linux**: ALSA development files (`libasound2-dev` on Debian/Ubuntu)
-
-## Basic Usage
-
-```javascript
+```js
 const cpal = require('node-cpal');
 
-// List all available audio hosts
-const hosts = cpal.getHosts();
-console.log('Available audio hosts:', hosts);
+const host = cpal.defaultHost();
+const device = host.defaultOutputDevice();
+if (!device) throw new Error('No output device');
 
-// Get the default output device
-const outputDevice = cpal.getDefaultOutputDevice();
-console.log('Default output device:', outputDevice);
-
-// Select an f32 output capability, because stream data uses Float32Array
-const defaultConfig = cpal.getDefaultOutputConfig(outputDevice.deviceId);
-const supportedConfigs = cpal
-  .getSupportedOutputConfigs(outputDevice.deviceId)
-  .filter((config) => config.format === 'f32');
-const supportedConfig =
-  supportedConfigs.find(
-    (config) =>
-      config.channels === defaultConfig.channels &&
-      defaultConfig.sampleRate >= config.minSampleRate &&
-      defaultConfig.sampleRate <= config.maxSampleRate
-  ) || supportedConfigs[0];
-if (!supportedConfig) {
-  throw new Error('Default output device does not support f32 audio');
+const supported = device.defaultOutputConfig();
+const format = supported.sampleFormat();
+if (format.isDsd()) {
+  throw new Error('Use buildOutputStreamRaw for a DSD configuration');
 }
+const config = supported.config();
+let phase = 0;
+let playbackTimeNs = 0n;
 
-const config = {
-  sampleRate:
-    defaultConfig.sampleRate >= supportedConfig.minSampleRate &&
-    defaultConfig.sampleRate <= supportedConfig.maxSampleRate
-      ? defaultConfig.sampleRate
-      : supportedConfig.minSampleRate,
-  channels: supportedConfig.channels,
-};
-const stream = cpal.createStream(
-  outputDevice.deviceId,
-  false,
+const stream = device.buildOutputStream(
   config,
-  () => {} // The native API requires a callback; output does not invoke it
+  format,
+  (data, info) => {
+    // The typed array is pre-filled with the format's equilibrium (silence).
+    if (format !== cpal.SampleFormat.F32) return;
+    for (let frame = 0; frame < data.length / config.channels; frame++) {
+      const sample = Math.sin(phase) * 0.2;
+      phase += 2 * Math.PI * 440 / config.sampleRate;
+      for (let channel = 0; channel < config.channels; channel++) {
+        data[frame * config.channels + channel] = sample;
+      }
+    }
+    playbackTimeNs = info.timestamp().playback.asNanos();
+  },
+  (error) => console.error(error.kind().name, error.message),
+  null // Optional timeout, as bigint nanoseconds.
 );
 
-// Close the stream when done
-cpal.closeStream(stream);
+// Like CPAL, newly built streams are paused.
+stream.play();
+setTimeout(() => {
+  stream.close();
+  device.close();
+  host.close();
+  console.log('Last playback timestamp:', playbackTimeNs);
+}, 1000);
 ```
 
-## Examples
+Unlike the queued convenience API, canonical callbacks are synchronous: the native CPAL audio callback waits while its JavaScript callback runs on the Node thread. This preserves CPAL callback ordering, mutability, and current-buffer semantics, but a stalled Node event loop can cause an underrun. Use `cpal.convenience` when bounded buffering and keeping JavaScript off the real-time path are more important than literal CPAL semantics.
 
-For more comprehensive examples, check out the [examples directory](./examples):
+## Translation rules
 
-- **[list-devices.js](./examples/list-devices.js)**: Enumerate audio hosts and devices with their capabilities
-- **[beep.js](./examples/beep.js)**: Generate and play a simple sine wave tone
-- **[audio-visualizer.js](./examples/audio-visualizer.js)**: Create a real-time terminal audio visualizer from microphone input
-- **[record-and-playback.js](./examples/record-and-playback.js)**: Record audio from the microphone and play it back
+The binding applies the same mechanical rules throughout:
 
-Each example includes detailed comments explaining how the code works.
+- Rust `snake_case` becomes JavaScript `camelCase`; enum variants remain PascalCase.
+- `Result<T, Error>` returns `T` or throws `CpalError`.
+- `Option<T>` becomes `T | null`.
+- iterators become JavaScript iterables, currently materialized as arrays;
+- `Duration` becomes a non-negative `bigint` count of nanoseconds;
+- generic sample type `T` becomes an explicit `SampleFormat` value and matching typed array;
+- Rust `Drop` is handled by a finalizer, with an idempotent `close()` extension for deterministic cleanup.
 
-## API Reference
+The complete public-item audit is in [`docs/cpal-0.18.2-parity.json`](./docs/cpal-0.18.2-parity.json). It labels every CPAL item as bound, structurally translated, conditional, or Rust-only.
 
-### Host and Device Enumeration
+## Hosts and devices
 
-#### `getHosts(): AudioHost[]`
+```js
+for (const id of cpal.availableHosts()) {
+  console.log(id.toString(), id.name());
+}
 
-Returns an array of available audio hosts on the system.
+const host = cpal.hostFromId(cpal.ALL_HOSTS[0]);
+for (const device of host.devices()) {
+  const description = device.description();
+  console.log(device.id().toString(), description.toString());
+}
 
-```javascript
-const hosts = cpal.getHosts();
-// Example: [{ id: 'coreaudio', name: 'CoreAudio' }]
+const saved = device.id().toString();
+const restored = host.deviceById(cpal.DeviceId.fromString(saved));
 ```
 
-#### `getDevices(hostId?: string): AudioDevice[]`
+`Host` and `Device` are real native handles. A `Device` retains its owning host, so PipeWire or other backend configuration is not lost during lookup or stream construction. `DeviceId` is CPAL's serializable `<host>:<device>` identifier.
 
-Returns device objects for the specified host. When omitted, `hostId` defaults to the platform's default host.
+The host methods mirror `HostTrait`:
 
-```javascript
-const host = cpal.getHosts()[0];
-const devices = cpal.getDevices(host.id);
-console.log(devices[0].deviceId, devices[0].name);
+```ts
+host.id(): HostId;
+Host.isAvailable(): boolean;
+host.devices(): Iterable<Device>;
+host.inputDevices(): Iterable<Device>;
+host.outputDevices(): Iterable<Device>;
+host.deviceById(id): Device | null;
+host.defaultInputDevice(): Device | null;
+host.defaultOutputDevice(): Device | null;
 ```
 
-#### `getDefaultInputDevice(): AudioDevice`
+The device query methods mirror `DeviceTrait`:
 
-Returns the default input device object, or throws when no default input device exists.
-
-```javascript
-const inputDevice = cpal.getDefaultInputDevice();
+```ts
+device.description(): DeviceDescription;
+device.id(): DeviceId;
+device.supportsInput(): boolean;
+device.supportsOutput(): boolean;
+device.supportedInputConfigs(): Iterable<SupportedStreamConfigRange>;
+device.supportedOutputConfigs(): Iterable<SupportedStreamConfigRange>;
+device.defaultInputConfig(): SupportedStreamConfig;
+device.defaultOutputConfig(): SupportedStreamConfig;
 ```
 
-#### `getDefaultOutputDevice(): AudioDevice`
+`DeviceDescriptionBuilder`, `DeviceType`, `InterfaceType`, and `DeviceDirection` are also exposed directly.
 
-Returns the default output device object, or throws when no default output device exists.
+## Configurations
 
-```javascript
-const outputDevice = cpal.getDefaultOutputDevice();
-```
+CPAL's configuration value types and methods are available without native calls:
 
-### Device Configuration
+```js
+const range = [...device.supportedOutputConfigs()][0];
+const supported = range.tryWithStandardSampleRate()
+  ?? range.withMaxSampleRate();
 
-#### `getSupportedInputConfigs(deviceId: string): AudioDeviceConfig[]`
-
-Returns an array of supported input configurations for the specified device.
-
-```javascript
-const inputDevice = cpal.getDefaultInputDevice();
-const configs = cpal.getSupportedInputConfigs(inputDevice.deviceId);
-```
-
-#### `getSupportedOutputConfigs(deviceId: string): AudioDeviceConfig[]`
-
-Returns an array of supported output configurations for the specified device.
-
-```javascript
-const outputDevice = cpal.getDefaultOutputDevice();
-const configs = cpal.getSupportedOutputConfigs(outputDevice.deviceId);
-```
-
-Supported configurations contain `minSampleRate`, `maxSampleRate`, `channels`, and `format`.
-
-#### `getDefaultInputConfig(deviceId: string): DefaultStreamConfig`
-
-Returns the default input configuration for the specified device.
-
-```javascript
-const inputDevice = cpal.getDefaultInputDevice();
-const config = cpal.getDefaultInputConfig(inputDevice.deviceId);
-```
-
-#### `getDefaultOutputConfig(deviceId: string): DefaultStreamConfig`
-
-Returns the default output configuration for the specified device.
-
-```javascript
-const outputDevice = cpal.getDefaultOutputDevice();
-const config = cpal.getDefaultOutputConfig(outputDevice.deviceId);
-```
-
-Default configurations contain `sampleRate`, `channels`, and `sampleFormat`.
-
-#### `getSupportedFormats(deviceId: string): SampleFormat[]`
-
-Returns the unique input and output formats exposed by the device.
-
-#### `getSupportedSampleRates(deviceId: string): number[]`
-
-Returns sorted, unique minimum and maximum sample-rate boundaries exposed by the device.
-
-#### `getMaxChannels(deviceId: string): number`
-
-Returns the largest input or output channel count exposed by the device.
-
-### Stream Management
-
-#### `createStream(deviceId: string, isInput: boolean, config: StreamConfig, callback: (data: Float32Array) => void): StreamId`
-
-Creates a stream and returns its string ID. Input callbacks receive `Float32Array` data. The callback argument is also required for output streams, although output streams do not invoke it.
-
-Streams currently use `f32` samples internally. Choose `sampleRate` and `channels` from a supported configuration whose `format` is `f32`; do not assume the default format is compatible.
-
-```javascript
-// Creating an input stream
-const inputDevice = cpal.getDefaultInputDevice();
-const inputCapability = cpal
-  .getSupportedInputConfigs(inputDevice.deviceId)
-  .find((config) => config.format === 'f32');
-if (!inputCapability) throw new Error('Input device does not support f32');
-const inputConfig = {
-  sampleRate: inputCapability.minSampleRate,
-  channels: inputCapability.channels,
-};
-
-const inputStream = cpal.createStream(
-  inputDevice.deviceId,
-  true,
-  inputConfig,
-  (data) => {
-    // Process incoming audio data
-    console.log(`Received ${data.length} samples`);
-  }
+console.log(
+  range.channels(),
+  range.minSampleRate(),
+  range.maxSampleRate(),
+  range.bufferSize(),
+  range.sampleFormat()
 );
 
-// Creating an output stream
-const outputDevice = cpal.getDefaultOutputDevice();
-const outputCapability = cpal
-  .getSupportedOutputConfigs(outputDevice.deviceId)
-  .find((config) => config.format === 'f32');
-if (!outputCapability) throw new Error('Output device does not support f32');
-const outputConfig = {
-  sampleRate: outputCapability.minSampleRate,
-  channels: outputCapability.channels,
-};
+const config = new cpal.StreamConfig({
+  channels: supported.channels(),
+  sampleRate: supported.sampleRate(),
+  bufferSize: cpal.BufferSize.Fixed(256),
+});
+```
 
-const outputStream = cpal.createStream(
-  outputDevice.deviceId,
-  false,
-  outputConfig,
-  () => {}
+`SupportedStreamConfigRange` implements CPAL's `withSampleRate`, `tryWithSampleRate`, `withMaxSampleRate`, `containsRate`, standard-rate selection, and `cmpDefaultHeuristics`. `SupportedBufferSize.Unknown` and `SupportedBufferSize.Range(min, max)` mirror its enum variants.
+
+## Typed and raw streams
+
+Because Rust's generic type argument does not exist at runtime in JavaScript, typed builders take an explicit sample format immediately after the config:
+
+```ts
+device.buildInputStream(config, sampleFormat, dataCallback, errorCallback, timeout?);
+device.buildOutputStream(config, sampleFormat, dataCallback, errorCallback, timeout?);
+```
+
+The callback receives the matching typed array. Raw builders receive a `Data` object:
+
+```js
+const stream = device.buildOutputStreamRaw(
+  config,
+  cpal.SampleFormat.I24,
+  (data, info) => {
+    console.log(data.sampleFormat(), data.len(), data.bytes());
+    const samples = data.asSliceMut(cpal.SampleFormat.I24);
+    samples.fill(0);
+  },
+  console.error
 );
 ```
 
-#### `writeToStream(streamId: StreamId, data: Float32Array): void`
+`Data` is valid only during its callback, matching CPAL's borrowed lifetime. Input `Data` is immutable; output `Data` exposes `bytesMut()` and `asSliceMut()`. DSD formats are supported only by the raw builders, matching CPAL's lack of a DSD `SizedSample` implementation.
 
-Writes audio data to an output stream.
+Streams expose CPAL's `play()`, `pause()`, `bufferSize()`, and `now()`. `now()` returns a `StreamInstant`. The binding adds `state()` and synchronous, idempotent `close()` for JavaScript resource management.
 
-```javascript
-// Write a buffer of audio data to the stream
-cpal.writeToStream(outputStream, audioBuffer);
+Closing is safe from inside a data callback. Shutdown wakes the waiting native audio callback before the native stream is dropped.
+
+## Sample formats and sample traits
+
+No stream conversion is implicit.
+
+| `SampleFormat` | Typed array | Notes |
+| --- | --- | --- |
+| `I8` | `Int8Array` | |
+| `I16` | `Int16Array` | |
+| `I24` | `Int32Array` | −8,388,608…8,388,607 |
+| `I32` | `Int32Array` | |
+| `I64` | `BigInt64Array` | |
+| `U8` | `Uint8Array` | |
+| `U16` | `Uint16Array` | |
+| `U24` | `Uint32Array` | 0…16,777,215 |
+| `U32` | `Uint32Array` | |
+| `U64` | `BigUint64Array` | |
+| `F32` | `Float32Array` | |
+| `F64` | `Float64Array` | |
+| `DsdU8` | `Uint8Array` | Raw streams only |
+| `DsdU16` | `Uint16Array` | Raw streams only |
+| `DsdU32` | `Uint32Array` | Raw streams only |
+
+Each format exposes `sampleSize()`, `bitsPerSample()`, `isInt()`, `isUint()`, `isFloat()`, and `isDsd()`. CPAL's re-exported `Sample`, `FromSample`, and `SizedSample` traits are represented by the `Sample`, `FromSample`, and `SizedSample` utility objects and typed signatures. `I24` and `U24` expose their checked and unchecked constructors, bounds, equilibrium, and inner value.
+
+## Timestamps and errors
+
+`StreamInstant`, `InputStreamTimestamp`, `OutputStreamTimestamp`, `InputCallbackInfo`, and `OutputCallbackInfo` mirror CPAL. Durations and `asNanos()` use `bigint`, preserving `u128` timestamp precision.
+
+Native failures throw or deliver a `CpalError`. `error.kind()` returns the matching `ErrorKind` value; `error.message` is the JavaScript `Error` message, and `error.cpalMessage()` is the CPAL optional-message equivalent. Binding-only failures use additional documented codes such as `CALLBACK_FAILED` and map to `ErrorKind.Other`.
+
+Canonical error callbacks use the same synchronous bridge as data callbacks, so every native CPAL error is delivered in order and cannot be suppressed by an audio-task quota. The queued convenience API reserves callback capacity for errors and coalesces only duplicate errors that are already pending.
+
+## Backend-specific hosts
+
+JACK and PipeWire packages conditionally export their concrete CPAL host types:
+
+```js
+if (!cpal.PipeWireHost) throw new Error('This build does not include PipeWire');
+const host = new cpal.PipeWireHost();
+host.setConnectAutomatically(false);
+
+if (!cpal.JackHost) throw new Error('This build does not include JACK');
+const jack = new cpal.JackHost();
+jack.setConnectAutomatically(false);
+jack.setStartServerAutomatically(true);
+const namedOutput = jack.outputDeviceWithName('node-cpal');
 ```
 
-#### `pauseStream(streamId: StreamId): void`
+These methods intentionally have CPAL's exact timing and behavior. In CPAL 0.18.2, `JackHost.new()` initializes default devices before the setters run; node-cpal does not pretend those setters were applied earlier.
 
-Pauses an active stream.
+Source builds with `--features test-host` conditionally export structural `CustomHost`, `CustomDevice`, and `CustomStream` adapters corresponding to CPAL's `from_host`, `from_device`, and `from_stream` APIs.
 
-```javascript
-cpal.pauseStream(stream);
+## Convenience API
+
+The previous higher-level API is namespaced under `cpal.convenience`:
+
+```js
+const { convenience } = require('node-cpal');
+
+const device = convenience.getDefaultOutputDevice();
+const config = convenience.getDefaultOutputConfig(device.deviceId);
+const stream = await convenience.createOutputStream({
+  deviceId: device.deviceId,
+  config,
+  mode: 'pull',
+  autoStart: true,
+  onData({ frames, channels }) {
+    return new Float32Array(frames * channels);
+  },
+  onError(error) {
+    console.error(error.code, error.message);
+  },
+});
+
+await stream.close();
 ```
 
-#### `resumeStream(streamId: StreamId): void`
+This API provides flattened discovery, stable-ID lookup, bounded input delivery, nonblocking push writes with `onDrain`, prefetched pull output, and CoreAudio/WASAPI loopback helpers. It is implemented on top of CPAL but is not part of CPAL's API. The runnable examples use the canonical API; the convenience facade retains its own unit, hardware, stress, and benchmark coverage.
 
-Resumes a paused stream.
-
-```javascript
-cpal.resumeStream(stream);
-```
-
-#### `closeStream(streamId: StreamId): void`
-
-Closes and cleans up a stream.
-
-```javascript
-cpal.closeStream(stream);
-```
-
-#### `isStreamActive(streamId: StreamId): boolean`
-
-Checks if a stream is currently active.
-
-```javascript
-const isActive = cpal.isStreamActive(stream);
-console.log(`Stream is ${isActive ? 'active' : 'inactive'}`);
-```
-
-## Type Definitions
-
-```typescript
-type SampleFormat =
-  | 'i8'
-  | 'i16'
-  | 'i24'
-  | 'i32'
-  | 'i64'
-  | 'u8'
-  | 'u16'
-  | 'u24'
-  | 'u32'
-  | 'u64'
-  | 'f32'
-  | 'f64'
-  | 'dsdu8'
-  | 'dsdu16'
-  | 'dsdu32';
-
-interface AudioDeviceConfig {
-  minSampleRate: number;
-  maxSampleRate: number;
-  channels: number;
-  format: SampleFormat;
-}
-
-interface AudioHost {
-  id: string;
-  name: string;
-}
-
-interface AudioDevice {
-  name: string;
-  hostId: string;
-  deviceId: string;
-  isDefaultInput: boolean;
-  isDefaultOutput: boolean;
-}
-
-interface StreamConfig {
-  sampleRate: number;
-  channels: number;
-}
-
-interface DefaultStreamConfig extends StreamConfig {
-  sampleFormat: SampleFormat;
-}
-
-type StreamId = string;
-```
-
-## Building from Source
-
-1. Ensure you have the Rust toolchain installed (https://rustup.rs/)
-2. Clone the repository
-3. Install dependencies and build:
-   ```bash
-   npm install
-   npm run build
-   ```
-
-## Testing
-
-Run deterministic JavaScript, TypeScript, and Rust unit tests without audio hardware:
+## Building and testing
 
 ```bash
+npm ci
+npm run debug
 npm test
+npm run test:hardware # requires real audio devices
+cargo fmt --check
 ```
 
-Build the addon before running tests that use real devices:
+Optional source features are passed after `--`:
 
 ```bash
-npm run build
-npm run test:audio
-npm run test:stress
+npm run build -- --features backend-pipewire
+npm run build -- --features realtime-dbus
 ```
 
-Run report-only audio benchmarks separately:
+Hardware suites access microphones and speakers and are opt-in:
 
 ```bash
+npm run test:hardware
 npm run benchmark:audio
 ```
 
-Hardware tests skip only capabilities that are genuinely unavailable. Record the operating system, architecture, and input/output hardware when reporting results.
-
-The manually triggered **Audio Hardware Tests** GitHub workflow targets a self-hosted runner with both `self-hosted` and `audio` labels. That runner must already have direct audio-device access and the platform development libraries listed above.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-ISC License
-
-## Acknowledgements
-
-- [CPAL](https://github.com/RustAudio/cpal) - The Rust Cross-Platform Audio Library
-- [Neon](https://neon-bindings.com/) - Rust bindings for writing safe and fast native Node.js modules
-
-### Publishing New Versions
-
-This package uses GitHub Actions to build platform-specific binaries and publish them to npm. See [PUBLISHING.md](PUBLISHING.md) for detailed instructions on how to publish new versions.
+See [PUBLISHING.md](./PUBLISHING.md) for release packaging and backend prerequisites.

@@ -1,184 +1,124 @@
-const cpal = require('../..');
 const assert = require('assert');
+const cpal = require('../..').convenience;
 const {
-  sleep,
   generateSineWave,
-  getTestDevice,
   getTestConfig,
+  getTestDevice,
 } = require('../helpers/hardware');
 
-describe('Stream Write Tests', () => {
-  let outputDevice;
-  let outputStream;
+describe('Convenience stream output', () => {
+  let device;
   let config;
 
   before(function () {
-    outputDevice = getTestDevice(false);
-    if (!outputDevice) {
-      this.skip();
-    }
-
-    config = getTestConfig(outputDevice, false);
-    if (!config) {
-      this.skip();
-    }
+    device = getTestDevice(false);
+    config = getTestConfig(device, false);
+    if (!device || !config) this.skip();
   });
 
-  beforeEach(() => {
-    outputStream = cpal.createStream(
-      outputDevice.deviceId,
-      false,
+  it('writes complete frames and reports buffered frames', async () => {
+    const stream = await cpal.createOutputStream({
+      deviceId: device.deviceId,
       config,
-      () => {}
-    );
-  });
-
-  afterEach(() => {
-    if (outputStream) {
-      cpal.closeStream(outputStream);
-      outputStream = null;
+      onError() {},
+    });
+    try {
+      const data = generateSineWave(440, config.sampleRate, config.channels, 0.1);
+      assert.strictEqual(stream.write(data), true);
+      assert.strictEqual(stream.bufferedFrames, data.length / config.channels);
+      stream.play();
+    } finally {
+      await stream.close();
     }
   });
 
-  it('should create an output stream', () => {
-    assert(outputStream, 'Should return a valid stream ID');
-    assert(
-      cpal.isStreamActive(outputStream),
-      'Stream should be active after creation'
-    );
-  });
-
-  it('should write sine wave data to the stream', () => {
-    // Generate a 1-second sine wave at 440Hz (A4 note)
-    const sineWave = generateSineWave(
-      440, // frequency (Hz)
-      config.sampleRate,
-      config.channels,
-      1, // duration (seconds)
-      0.5 // volume (50%)
-    );
-
-    // Write the data to the stream
-    cpal.writeToStream(outputStream, sineWave);
-    assert(cpal.isStreamActive(outputStream));
-  });
-
-  it('should write multiple buffers in sequence', async () => {
-    // Generate three different tones
-    const frequencies = [261.63, 329.63, 392.0]; // C4, E4, G4 (C major chord)
-    const toneDuration = 0.3;
-
-    for (const freq of frequencies) {
-      // Generate a short tone (0.3 seconds)
-      const tone = generateSineWave(
-        freq,
-        config.sampleRate,
-        config.channels,
-        toneDuration,
-        0.5
-      );
-
-      // Write to the stream
-      cpal.writeToStream(outputStream, tone);
-
-      // Wait for the tone to play
-      await sleep(toneDuration * 1000);
+  it('uses boolean backpressure and emits drain when writable again', async () => {
+    let resolveDrain;
+    const drained = new Promise((resolve) => {
+      resolveDrain = resolve;
+    });
+    const stream = await cpal.createOutputStream({
+      deviceId: device.deviceId,
+      config,
+      queueCapacityBuffers: 2,
+      onDrain: resolveDrain,
+      onError() {},
+    });
+    try {
+      const data = generateSineWave(220, config.sampleRate, config.channels, 0.05);
+      assert.strictEqual(stream.write(data), true);
+      assert.strictEqual(stream.write(data), true);
+      assert.strictEqual(stream.write(data), false);
+      stream.play();
+      await Promise.race([
+        drained,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('drain timeout')), 3000)
+        ),
+      ]);
+      assert.strictEqual(stream.write(data), true);
+    } finally {
+      await stream.close();
     }
+  }).timeout(5000);
 
-    assert(cpal.isStreamActive(outputStream));
-  });
+  it('reports output timestamps and underrun frame counts', async () => {
+    let resolveOutput;
+    const output = new Promise((resolve) => {
+      resolveOutput = resolve;
+    });
+    const stream = await cpal.createOutputStream({
+      deviceId: device.deviceId,
+      config,
+      autoStart: true,
+      onOutput: resolveOutput,
+      onError() {},
+    });
+    try {
+      const info = await Promise.race([
+        output,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('output callback timeout')), 3000)
+        ),
+      ]);
+      assert(info.frames > 0);
+      assert.strictEqual(typeof info.callbackTimeNs, 'bigint');
+      assert.strictEqual(typeof info.playbackTimeNs, 'bigint');
+      assert(Number.isInteger(info.underrunFrames));
+    } finally {
+      await stream.close();
+    }
+  }).timeout(5000);
 
-  it('should handle empty buffer gracefully', () => {
-    // Create an empty buffer
-    const emptyBuffer = new Float32Array(0);
-
-    // Attempt to write the empty buffer - should throw an error
-    assert.throws(() => {
-      cpal.writeToStream(outputStream, emptyBuffer);
-    }, /Invalid buffer size/);
-  });
-
-  it('should reject writing to paused stream', async () => {
-    // Pause the stream
-    cpal.pauseStream(outputStream);
-
-    // Verify stream is paused
-    assert(
-      !cpal.isStreamActive(outputStream),
-      'Stream should be inactive after pausing'
-    );
-
-    // Generate some audio data
-    const sineWave = generateSineWave(
-      440,
-      config.sampleRate,
-      config.channels,
-      0.5,
-      0.5
-    );
-
-    // Attempt to write to the paused stream - should throw an error
-    assert.throws(() => {
-      cpal.writeToStream(outputStream, sineWave);
-    }, /Stream is not active/);
-
-    // Resume the stream
-    cpal.resumeStream(outputStream);
-
-    // Verify stream is active again
-    assert(
-      cpal.isStreamActive(outputStream),
-      'Stream should be active after resuming'
-    );
-  });
-
-  it('should handle writing large buffers', () => {
-    // Generate a longer audio sample (5 seconds)
-    const longSineWave = generateSineWave(
-      440,
-      config.sampleRate,
-      config.channels,
-      5,
-      0.5
-    );
-
-    // Write the large buffer to the stream
-    cpal.writeToStream(outputStream, longSineWave);
-    assert.strictEqual(
-      longSineWave.length,
-      config.sampleRate * config.channels * 5
-    );
-    assert(cpal.isStreamActive(outputStream));
-  });
-
-  it('should close the stream properly', () => {
-    // Close the stream
-    cpal.closeStream(outputStream);
-
-    // Verify the stream is no longer active
-    assert.strictEqual(
-      cpal.isStreamActive(outputStream),
-      false,
-      'Stream should not be active after closing'
-    );
-
-    // Reset the stream variable since it's now closed
-    outputStream = null;
-  });
-
-  it('should reject writing to non-existent stream', () => {
-    // Generate some audio data
-    const sineWave = generateSineWave(
-      440,
-      config.sampleRate,
-      config.channels,
-      0.5,
-      0.5
-    );
-
-    // Attempt to write to a non-existent stream
-    assert.throws(() => {
-      cpal.writeToStream('non-existent-stream-id', sineWave);
-    }, /Stream not found/);
-  });
+  it('prefetches and sustains pull output without calling JS on the audio thread', async () => {
+    let requestCount = 0;
+    let resolveRequests;
+    const requested = new Promise((resolve) => {
+      resolveRequests = resolve;
+    });
+    const stream = await cpal.createOutputStream({
+      deviceId: device.deviceId,
+      config,
+      mode: 'pull',
+      prefetchBuffers: 3,
+      autoStart: true,
+      onData({ frames, channels }) {
+        requestCount++;
+        if (requestCount >= 5) resolveRequests();
+        return new Float32Array(frames * channels);
+      },
+      onError() {},
+    });
+    try {
+      assert(requestCount >= 3);
+      await Promise.race([
+        requested,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('pull callback timeout')), 3000)
+        ),
+      ]);
+    } finally {
+      await stream.close();
+    }
+  }).timeout(5000);
 });

@@ -1,188 +1,75 @@
 const assert = require('assert');
-const cpal = require('../..');
+const cpal = require('../..').convenience;
 const {
   generateSineWave,
-  assertStreamCreationThrows,
+  getMemoryUsage,
   getTestConfig,
   getTestDevice,
-  withTestStream,
 } = require('../helpers/hardware');
 
-describe('Resource Management Tests', () => {
+describe('Convenience resource management stress', () => {
   let device;
   let config;
 
   before(function () {
     device = getTestDevice(false);
-    if (!device) {
-      this.skip();
-    }
-
     config = getTestConfig(device, false);
-    if (!config) {
-      this.skip();
-    }
+    if (!device || !config) this.skip();
   });
 
-  it('removes every repeatedly closed stream from the registry', async () => {
-    const iterations = 10;
-    const streamIds = new Set();
-
-    for (let i = 0; i < iterations; i++) {
-      let stream;
-      await withTestStream(device, false, config, async (createdStream) => {
-        stream = createdStream;
-        assert(!streamIds.has(stream));
-        streamIds.add(stream);
-        cpal.writeToStream(
-          stream,
-          generateSineWave(440, config.sampleRate, config.channels, 0.01)
-        );
-        assert(cpal.isStreamActive(stream));
-      });
-
-      assert.strictEqual(cpal.isStreamActive(stream), false);
-      assert.throws(
-        () => cpal.pauseStream(stream),
-        /stream not found|invalid stream|stream closed/i
-      );
-    }
-
-    assert.strictEqual(streamIds.size, iterations);
-  }).timeout(10000);
-
-  it('supports a complete stream lifecycle', () => {
-    const stream = cpal.createStream(
-      device.deviceId,
-      false,
-      config,
-      () => {}
-    );
-    const buffer = generateSineWave(
-      440,
-      config.sampleRate,
-      config.channels,
-      0.01
-    );
-
-    try {
-      cpal.writeToStream(stream, buffer);
-      cpal.pauseStream(stream);
-      assert.strictEqual(cpal.isStreamActive(stream), false);
-      cpal.resumeStream(stream);
-      assert.strictEqual(cpal.isStreamActive(stream), true);
-      cpal.writeToStream(stream, buffer);
-      cpal.closeStream(stream);
-
-      assert.strictEqual(cpal.isStreamActive(stream), false);
-      assert.throws(() => cpal.writeToStream(stream, buffer), /Stream not found/);
-      assert.throws(() => cpal.pauseStream(stream), /Stream not found/);
-      assert.throws(() => cpal.resumeStream(stream), /Stream not found/);
-    } finally {
-      cpal.closeStream(stream);
-    }
-  });
-
-  it('rejects an invalid device without disrupting an open stream', () => {
-    const stream = cpal.createStream(
-      device.deviceId,
-      false,
-      config,
-      () => {}
-    );
-    const buffer = generateSineWave(
-      440,
-      config.sampleRate,
-      config.channels,
-      0.01
-    );
-
-    try {
-      cpal.writeToStream(stream, buffer);
-      assertStreamCreationThrows(
-        () =>
-          cpal.createStream('disconnected-device', false, config, () => {}),
-        /Device not found/
-      );
-      cpal.writeToStream(stream, buffer);
-      assert(cpal.isStreamActive(stream));
-    } finally {
-      cpal.closeStream(stream);
-    }
-
-    assert.strictEqual(cpal.isStreamActive(stream), false);
-  });
-
-  it('keeps every successfully allocated stream usable', () => {
-    const maxAttempts = 32;
+  it('creates and closes streams repeatedly without retaining live state', async () => {
     const streams = [];
-    let allocationError;
+    for (let index = 0; index < 50; index++) {
+      const stream = await cpal.createOutputStream({
+        deviceId: device.deviceId,
+        config,
+        onError() {},
+      });
+      streams.push(stream);
+      await stream.close();
+      assert.strictEqual(stream.state, 'closed');
+    }
+    assert.strictEqual(new Set(streams).size, streams.length);
+  }).timeout(20_000);
 
+  it('keeps concurrently open stream state independent', async () => {
+    const streams = await Promise.all(
+      Array.from({ length: 6 }, () => cpal.createOutputStream({
+        deviceId: device.deviceId,
+        config,
+        onError() {},
+      }))
+    );
     try {
-      for (let i = 0; i < maxAttempts; i++) {
-        try {
-          streams.push(
-            cpal.createStream(device.deviceId, false, config, () => {})
-          );
-        } catch (error) {
-          allocationError = error;
-          break;
-        }
-      }
-
-      assert(streams.length > 0, 'At least one stream should be available');
-      assert.strictEqual(new Set(streams).size, streams.length);
-      if (allocationError) {
-        assert.match(allocationError.message, /Failed to build output stream/i);
-      }
-
-      const buffer = generateSineWave(
-        440,
-        config.sampleRate,
-        config.channels,
-        0.01
-      );
-      streams.forEach((stream) => {
-        cpal.writeToStream(stream, buffer);
-        assert(cpal.isStreamActive(stream));
+      streams.forEach((stream, index) => {
+        if (index % 2 === 0) stream.play();
+      });
+      streams.forEach((stream, index) => {
+        assert.strictEqual(stream.state, index % 2 === 0 ? 'playing' : 'paused');
       });
     } finally {
-      streams.forEach((stream) => cpal.closeStream(stream));
+      await Promise.all(streams.map((stream) => stream.close()));
     }
+  });
 
-    streams.forEach((stream) => {
-      assert.strictEqual(cpal.isStreamActive(stream), false);
-    });
-  }).timeout(10000);
+  it('does not leak unbounded memory during repeated queued writes', async () => {
+    const before = getMemoryUsage().rss;
+    const data = generateSineWave(440, config.sampleRate, config.channels, 0.01);
 
-  it('preserves state across rapid pause and resume cycles', () => {
-    const stream = cpal.createStream(
-      device.deviceId,
-      false,
-      config,
-      () => {}
-    );
-    const iterations = 50;
-    const buffer = generateSineWave(
-      440,
-      config.sampleRate,
-      config.channels,
-      0.01
-    );
-
-    try {
-      cpal.writeToStream(stream, buffer);
-      for (let i = 0; i < iterations; i++) {
-        cpal.pauseStream(stream);
-        assert.strictEqual(cpal.isStreamActive(stream), false);
-        cpal.resumeStream(stream);
-        assert.strictEqual(cpal.isStreamActive(stream), true);
+    for (let round = 0; round < 10; round++) {
+      const stream = await cpal.createOutputStream({
+        deviceId: device.deviceId,
+        config,
+        autoStart: true,
+        onError() {},
+      });
+      for (let write = 0; write < 20; write++) {
+        stream.write(data);
       }
-      cpal.writeToStream(stream, buffer);
-    } finally {
-      cpal.closeStream(stream);
+      await stream.close();
     }
 
-    assert.strictEqual(cpal.isStreamActive(stream), false);
-  }).timeout(10000);
+    const growth = getMemoryUsage().rss - before;
+    assert(growth < 128 * 1024 * 1024, `RSS grew by ${growth} bytes`);
+  }).timeout(20_000);
 });

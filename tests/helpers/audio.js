@@ -36,7 +36,7 @@ function getDeviceId(device) {
 
 function selectF32Config(supportedConfigs, defaultConfig) {
   const floatConfigs = supportedConfigs.filter(
-    (supportedConfig) => supportedConfig.format === 'f32'
+    (supportedConfig) => supportedConfig.sampleFormat === 'f32'
   );
   if (floatConfigs.length === 0) {
     return null;
@@ -58,7 +58,8 @@ function selectF32Config(supportedConfigs, defaultConfig) {
   return {
     channels: Number(selectedConfig.channels),
     sampleRate: Number(sampleRate),
-    format: 'f32',
+    sampleFormat: 'f32',
+    bufferSize: { type: 'default' },
   };
 }
 
