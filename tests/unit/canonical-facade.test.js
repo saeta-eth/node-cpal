@@ -3,6 +3,7 @@ const Module = require('module');
 const path = require('path');
 
 const ENTRY = path.resolve(__dirname, '../..', 'index.js');
+const FACADE = path.resolve(__dirname, '../..', 'facade.js');
 const VALUES = path.resolve(__dirname, '../..', 'cpal-values.js');
 
 function createFakeNative() {
@@ -90,6 +91,7 @@ function createFakeNative() {
 
 function loadFacade(native) {
   delete require.cache[ENTRY];
+  delete require.cache[FACADE];
   delete require.cache[VALUES];
   const originalLoad = Module._load;
   Module._load = function load(request, parent, isMain) {

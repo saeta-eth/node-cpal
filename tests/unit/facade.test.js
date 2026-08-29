@@ -98,8 +98,10 @@ function createFakeNative() {
 
 function loadFacade(native) {
   const entry = require.resolve('../..');
+  const facade = require.resolve('../../facade');
   const originalLoad = Module._load;
   delete require.cache[entry];
+  delete require.cache[facade];
   Module._load = function load(request, parent, isMain) {
     if (typeof request === 'string' && request.endsWith('index.node')) {
       return native;
@@ -111,6 +113,7 @@ function loadFacade(native) {
   } finally {
     Module._load = originalLoad;
     delete require.cache[entry];
+    delete require.cache[facade];
   }
 }
 

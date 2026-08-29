@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "cpal-direct": "node cpal-direct.js",
+    "optional-backend": "node optional-backend.js",
     "list-devices": "node list-devices.js",
     "audio-visualizer": "node audio-visualizer.js",
     "beep": "node beep.js",

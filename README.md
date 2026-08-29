@@ -14,20 +14,37 @@ Upgrading from 0.2.0? Follow the [0.2.0 to 1.0.0 migration guide](./docs/migrati
 | Linux | x64, arm64 | ALSA |
 | Windows | x64 | WASAPI |
 
-Optional backend packages compile the same binding with another CPAL feature:
+The same npm package also contains feature-specific CPAL builds behind package
+subpaths:
 
-| Package | Backend |
-| --- | --- |
-| `@node-cpal/backend-jack` | JACK |
-| `@node-cpal/backend-pipewire` | PipeWire |
-| `@node-cpal/backend-pulseaudio` | PulseAudio |
-| `@node-cpal/backend-asio` | ASIO |
+| Import | Platforms | Additional backend |
+| --- | --- | --- |
+| `node-cpal/backend-jack` | macOS, Linux, Windows | JACK |
+| `node-cpal/backend-pipewire` | Linux | PipeWire |
+| `node-cpal/backend-pulseaudio` | Linux | PulseAudio |
+| `node-cpal/backend-asio` | Windows | ASIO |
+
+These are entry points of `node-cpal`, not separately installed packages. Each
+loads a native addon compiled with the named CPAL feature while retaining the
+platform's default backend as well.
 
 Node.js 22 or newer is required. Source builds require Rust 1.85 or newer plus the selected backend's development libraries.
 
 ```bash
 npm install node-cpal
 ```
+
+To select an optional backend, import its subpath and then use CPAL's normal
+host selection API:
+
+```js
+const cpal = require('node-cpal/backend-jack');
+const host = cpal.hostFromId(cpal.HostId.Jack);
+```
+
+The corresponding native client library and audio service or driver must be
+available on the machine. Importing a subpath on an unsupported platform throws
+`CpalError` with code `UNSUPPORTED_OPERATION`.
 
 ## Canonical quick start
 
@@ -231,7 +248,7 @@ Canonical error callbacks use the same synchronous bridge as data callbacks, so 
 
 ## Backend-specific hosts
 
-JACK and PipeWire packages conditionally export their concrete CPAL host types:
+The JACK and PipeWire subpath builds export their concrete CPAL host types:
 
 ```js
 if (!cpal.PipeWireHost) throw new Error('This build does not include PipeWire');
@@ -293,6 +310,11 @@ npm run build -- --features backend-pipewire
 npm run build -- --features realtime-dbus
 ```
 
+This remains useful for development or custom feature combinations. The build
+replaces the local `index.node`; import the matching package subpath to verify
+that its requested feature is present. Install the selected backend's native
+development libraries first.
+
 Hardware suites access microphones and speakers and are opt-in:
 
 ```bash
@@ -300,4 +322,4 @@ npm run test:hardware
 npm run benchmark:audio
 ```
 
-See [PUBLISHING.md](./PUBLISHING.md) for release packaging and backend prerequisites.
+See [PUBLISHING.md](./PUBLISHING.md) for release packaging details.

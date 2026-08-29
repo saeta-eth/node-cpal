@@ -7,16 +7,16 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to package for the dry run'
+        description: Version to package for the dry run
         required: true
-        default: '0.0.0-dry-run'
+        default: 0.0.0-dry-run
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build on ${{ matrix.os }} (${{ matrix.arch }})
+  build-default:
+    name: Default on ${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -51,7 +51,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'npm'
+          cache: npm
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -61,55 +61,189 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: default-${{ matrix.target }}
 
-      - name: Install Linux dependencies
+      - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev pkg-config
 
-      - name: Temporarily modify package.json for build
-        run: |
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            delete pkg.os;
-            delete pkg.cpu;
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          "
-
-      - name: Install dependencies
+      - name: Install Node.js dependencies
         run: npm ci
 
-      - name: Build
+      - name: Build default addon
         run: npm run build -- --target ${{ matrix.target }}
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
-      - name: Verify binary architecture
+      - name: Verify native binary
         run: node scripts/verify-native-binary.js index.node ${{ matrix.platform }}-${{ matrix.arch }}
 
-      - name: Prepare package
+      - name: Stage native binary
+        shell: bash
         run: |
-          mkdir -p dist/${{ matrix.platform }}-${{ matrix.arch }}
-          cp index.node dist/${{ matrix.platform }}-${{ matrix.arch }}/
-          cp index.d.ts dist/
-          cp package.json dist/
-          cp README.md dist/
-          cp -r examples dist/
+          mkdir -p staged/bin/${{ matrix.platform }}-${{ matrix.arch }}
+          cp index.node staged/bin/${{ matrix.platform }}-${{ matrix.arch }}/index.node
 
-      - name: Upload artifacts
+      - name: Upload default binary
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-${{ matrix.platform }}-${{ matrix.arch }}
-          path: dist
+          name: default-${{ matrix.platform }}-${{ matrix.arch }}
+          path: staged
+          if-no-files-found: error
+          retention-days: 1
+
+  build-backend:
+    name: ${{ matrix.backend }} on ${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: jack
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            platform: darwin
+            arch: x64
+          - backend: jack
+            os: macos-15
+            target: aarch64-apple-darwin
+            platform: darwin
+            arch: arm64
+          - backend: jack
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+            arch: x64
+          - backend: jack
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux
+            arch: arm64
+          - backend: jack
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: win32
+            arch: x64
+          - backend: pipewire
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+            arch: x64
+          - backend: pipewire
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux
+            arch: arm64
+          - backend: pulseaudio
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+            arch: x64
+          - backend: pulseaudio
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux
+            arch: arm64
+          - backend: asio
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: win32
+            arch: x64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: backend-${{ matrix.backend }}-${{ matrix.target }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
+
+      - name: Install JACK build dependencies
+        if: runner.os == 'Linux' && matrix.backend == 'jack'
+        run: sudo apt-get install -y libjack-jackd2-dev
+
+      - name: Install PipeWire build dependencies
+        if: runner.os == 'Linux' && matrix.backend == 'pipewire'
+        run: sudo apt-get install -y libpipewire-0.3-dev
+
+      - name: Install PulseAudio build dependencies
+        if: runner.os == 'Linux' && matrix.backend == 'pulseaudio'
+        run: sudo apt-get install -y libpulse-dev
+
+      - name: Setup ASIO SDK and LLVM
+        if: matrix.backend == 'asio'
+        shell: pwsh
+        run: |
+          curl.exe -L -o asio.zip https://www.steinberg.net/asiosdk
+          7z x -oasio asio.zip
+          $sdkRoot = Get-ChildItem -Path asio -Directory | Select-Object -First 1
+          Move-Item $sdkRoot.FullName asio\sdk
+          choco install llvm --yes
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Build optional backend
+        if: matrix.backend != 'asio'
+        run: npm run build -- --target ${{ matrix.target }} --features backend-${{ matrix.backend }}
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+      - name: Build ASIO backend
+        if: matrix.backend == 'asio'
+        run: npm run build -- --target ${{ matrix.target }} --features backend-asio
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+          CPAL_ASIO_DIR: ${{ github.workspace }}\asio\sdk
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+
+      - name: Verify native binary
+        run: node scripts/verify-native-binary.js index.node ${{ matrix.platform }}-${{ matrix.arch }}
+
+      - name: Verify backend registration
+        run: node -e "const cpal = require('./backend-${{ matrix.backend }}'); if (!cpal.ALL_HOSTS.some((host) => host.toString() === '${{ matrix.backend }}')) throw new Error('backend missing from native addon')"
+
+      - name: Stage native binary
+        shell: bash
+        run: |
+          mkdir -p staged/bin/backend-${{ matrix.backend }}/${{ matrix.platform }}-${{ matrix.arch }}
+          cp index.node staged/bin/backend-${{ matrix.backend }}/${{ matrix.platform }}-${{ matrix.arch }}/index.node
+
+      - name: Upload backend binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-${{ matrix.backend }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: staged
+          if-no-files-found: error
           retention-days: 1
 
   package:
-    name: Assemble npm package
-    needs: build
+    name: Assemble node-cpal npm package
+    needs:
+      - build-default
+      - build-backend
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -119,119 +253,67 @@ jobs:
         with:
           node-version: 22
 
-      - name: Download all artifacts
+      - name: Download default binaries
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          pattern: default-*
+          path: assembled
+          merge-multiple: true
+
+      - name: Download backend binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: backend-*
+          path: assembled
+          merge-multiple: true
 
       - name: Prepare package
         run: |
           mkdir -p dist
-          cp index.js dist/
-          cp index.d.ts dist/
-          cp cpal-values.js dist/
-          cp package.json dist/
-          cp README.md dist/
-          cp -r docs dist/
-          cp -r examples dist/
-          mkdir -p dist/bin
+          cp index.js index.d.ts facade.js cpal-values.js dist/
+          cp backend-*.js backend-*.d.ts dist/
+          cp package.json README.md dist/
+          cp -r docs examples dist/
+          cp -r assembled/bin dist/
 
-          # Create platform-specific directories
-          mkdir -p dist/bin/darwin-x64
-          mkdir -p dist/bin/darwin-arm64
-          mkdir -p dist/bin/linux-x64
-          mkdir -p dist/bin/linux-arm64
-          mkdir -p dist/bin/win32-x64
-
-          # List artifacts for debugging
-          find artifacts -type f -name "*.node" | sort
-
-          # Copy the binaries from artifacts with better error handling
-          if [ -f artifacts/binaries-darwin-x64/darwin-x64/index.node ]; then
-            cp artifacts/binaries-darwin-x64/darwin-x64/index.node dist/bin/darwin-x64/
-            echo "✅ macOS x64 binary copied successfully"
-          else
-            echo "⚠️ No macOS x64 binary found"
-            ls -la artifacts/binaries-darwin-x64 || echo "Directory not found"
-          fi
-
-          if [ -f artifacts/binaries-darwin-arm64/darwin-arm64/index.node ]; then
-            cp artifacts/binaries-darwin-arm64/darwin-arm64/index.node dist/bin/darwin-arm64/
-            echo "✅ macOS ARM64 binary copied successfully"
-          else
-            echo "⚠️ No macOS ARM64 binary found"
-            ls -la artifacts/binaries-darwin-arm64 || echo "Directory not found"
-          fi
-
-          if [ -f artifacts/binaries-linux-x64/linux-x64/index.node ]; then
-            cp artifacts/binaries-linux-x64/linux-x64/index.node dist/bin/linux-x64/
-            echo "✅ Linux x64 binary copied successfully"
-          else
-            echo "⚠️ No Linux x64 binary found"
-            ls -la artifacts/binaries-linux-x64 || echo "Directory not found"
-          fi
-
-          if [ -f artifacts/binaries-linux-arm64/linux-arm64/index.node ]; then
-            cp artifacts/binaries-linux-arm64/linux-arm64/index.node dist/bin/linux-arm64/
-            echo "✅ Linux ARM64 binary copied successfully"
-          else
-            echo "⚠️ No Linux ARM64 binary found"
-            ls -la artifacts/binaries-linux-arm64 || echo "Directory not found"
-          fi
-
-          if [ -f artifacts/binaries-win32-x64/win32-x64/index.node ]; then
-            cp artifacts/binaries-win32-x64/win32-x64/index.node dist/bin/win32-x64/
-            echo "✅ Windows x64 binary copied successfully"
-          else
-            echo "⚠️ No Windows x64 binary found"
-            ls -la artifacts/binaries-win32-x64 || echo "Directory not found"
-          fi
-
-          # Verify all binaries were copied
-          echo "Verifying binaries in dist/bin:"
-          find dist/bin -type f | sort
-
+      - name: Verify packaged native binaries
+        run: |
           node scripts/verify-native-binary.js dist/bin/darwin-x64/index.node darwin-x64
           node scripts/verify-native-binary.js dist/bin/darwin-arm64/index.node darwin-arm64
           node scripts/verify-native-binary.js dist/bin/linux-x64/index.node linux-x64
           node scripts/verify-native-binary.js dist/bin/linux-arm64/index.node linux-arm64
           node scripts/verify-native-binary.js dist/bin/win32-x64/index.node win32-x64
+          node scripts/verify-native-binary.js dist/bin/backend-jack/darwin-x64/index.node darwin-x64
+          node scripts/verify-native-binary.js dist/bin/backend-jack/darwin-arm64/index.node darwin-arm64
+          node scripts/verify-native-binary.js dist/bin/backend-jack/linux-x64/index.node linux-x64
+          node scripts/verify-native-binary.js dist/bin/backend-jack/linux-arm64/index.node linux-arm64
+          node scripts/verify-native-binary.js dist/bin/backend-jack/win32-x64/index.node win32-x64
+          node scripts/verify-native-binary.js dist/bin/backend-pipewire/linux-x64/index.node linux-x64
+          node scripts/verify-native-binary.js dist/bin/backend-pipewire/linux-arm64/index.node linux-arm64
+          node scripts/verify-native-binary.js dist/bin/backend-pulseaudio/linux-x64/index.node linux-x64
+          node scripts/verify-native-binary.js dist/bin/backend-pulseaudio/linux-arm64/index.node linux-arm64
+          node scripts/verify-native-binary.js dist/bin/backend-asio/win32-x64/index.node win32-x64
 
-      - name: Modify package.json for platform-specific binaries
+      - name: Prepare package metadata
         run: |
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('dist/package.json', 'utf8'));
-            pkg.main = 'index.js';
-            delete pkg.gypfile;
             delete pkg.scripts.prepublishOnly;
-            pkg.os = ['darwin', 'linux', 'win32'];
-            pkg.cpu = ['x64', 'arm64'];
             fs.writeFileSync('dist/package.json', JSON.stringify(pkg, null, 2));
           "
 
-      - name: Set version from workflow dispatch
+      - name: Set dry-run version
         if: github.event_name == 'workflow_dispatch'
-        run: |
-          cd dist
-          npm version "${{ github.event.inputs.version }}" --no-git-tag-version --allow-same-version
-          echo "Packaging dry-run version ${{ github.event.inputs.version }}"
+        working-directory: dist
+        run: npm version "${{ github.event.inputs.version }}" --no-git-tag-version --allow-same-version
 
-      - name: Set version from tag
+      - name: Set tagged version
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        run: |
-          # Extract version from tag (remove the 'v' prefix)
-          TAG=${GITHUB_REF#refs/tags/v}
-          echo "Extracted version: $TAG"
-
-          # Read current version from package.json
-          CURRENT_VERSION=$(node -p "require('./dist/package.json').version")
-          echo "Current version in package.json: $CURRENT_VERSION"
-
-          # Set the version in the dist package.json
-          cd dist
-          npm version "$TAG" --no-git-tag-version --allow-same-version
-          echo "Set version to $TAG in dist/package.json"
+        working-directory: dist
+        env:
+          TAG_VERSION: ${{ github.ref_name }}
+        run: npm version "${TAG_VERSION#v}" --no-git-tag-version --allow-same-version
 
       - name: Pack npm package
         run: |
@@ -251,19 +333,20 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Publish to npm
+    name: Publish node-cpal to npm
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: package
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
+
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
       - name: Download npm package
